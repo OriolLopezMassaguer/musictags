@@ -1,0 +1,106 @@
+# Tagging schema derived from your current tags by analyze_tags.py
+# Example generated from a small test library — run analyze_tags.py to get yours
+# Review it, then save as schema.toml and run propose_changes.py.
+
+[general]
+id3_version = 4          # 4 = real multi-value frames (recommended). 3 = joined with '; ' for old players
+auto_approve = ["high", "medium"]   # confidence levels pre-approved in changes.csv
+
+[artists]
+# ARTIST  = display credit, e.g. 'Daft Punk feat. Pharrell Williams'
+# ARTISTS = one value per person/band, e.g. ['Daft Punk', 'Pharrell Williams']
+split_separators = [" & ", ", ", "; ", ";", " / ", " + "]
+feat_patterns = ["\\s*[\\(\\[]\\s*(?:feat\\.?|ft\\.?|featuring|with)\\s+", "\\s+(?:feat\\.?|ft\\.?|featuring)\\s+"]
+display_joiner = " & "
+feat_joiner = " feat. "
+rebuild_display = true        # rewrite ARTIST from the canonical names
+feat_from_title = true        # 'Song (feat. X)' adds X to ARTISTS
+fill_artistsort = true        # 'The Beatles' -> ARTISTSORT 'Beatles, The'
+various_artists = "Various Artists"
+# Names that contain a separator but are ONE act. Built from your library:
+keep_together = [
+    "Above & Beyond",
+    "AC/DC",
+    "Belle & Sebastian",
+    "Blood, Sweat & Tears",
+    "Bob Marley & the Wailers",
+    "Booker T. & the M.G.'s",
+    "Crosby, Stills, Nash & Young",
+    "Derek & the Dominos",
+    "Earth, Wind & Fire",
+    "Echo & the Bunnymen",
+    "Emerson, Lake & Palmer",
+    "Florence + the Machine",
+    "Hall & Oates",
+    "Huey Lewis & the News",
+    "Ike & Tina Turner",
+    "Iron & Wine",
+    "Joan Jett & the Blackhearts",
+    "Kool & the Gang",
+    "Marina and the Diamonds",
+    "Mumford & Sons",
+    "Nick Cave & the Bad Seeds",
+    "Peter, Paul and Mary",
+    "Sam & Dave",
+    "Simon & Garfunkel",
+    "Siouxsie and the Banshees",
+    "Sly & the Family Stone",
+    "Tom Petty and the Heartbreakers",
+    "Tyler, the Creator",
+]
+
+[albumartist]
+fill_missing = true           # albums without ALBUMARTIST get one
+unify = true                  # same ALBUMARTIST on every track of an album
+classical = "composer"   # for classical albums with ONE composer: "composer" | "performer" | "keep"
+
+[composers]
+split_separators = ["/", "; ", ";", ", ", " & ", " and "]
+use_builtin_classical = true  # ~190 classical composers with canonical spelling + period
+fill_composersort = true      # 'Bach, Johann Sebastian'
+infer_from_artist = true      # ARTIST is a known composer and COMPOSER empty -> propose (low confidence)
+infer_from_title = true       # 'Bach: Cello Suite No. 1 - I. Prelude' -> composer/work/movement
+
+[genres]
+# GENRE = top-level genre from the taxonomy (1-2 values). STYLE = finer sub-genres.
+taxonomy = ["Blues", "Classical", "Country", "Electronic", "Folk", "Hip-Hop", "Jazz", "Latin", "Metal", "Pop", "R&B & Soul", "Reggae", "Rock", "Soundtrack", "Spoken Word", "World", "Religious", "Children's", "Holiday"]
+split_separators = ["/", ";", ",", "|"]
+max_genres = 2
+write_style = true            # keep the detail in a STYLE tag
+style_into_genre = false      # true: put styles in GENRE too (for players that ignore STYLE)
+unmapped = "keep"             # unmapped genres: "keep" (low confidence) | "drop" | "style"
+classical_period_style = true # Classical tracks with a known composer get STYLE = period (Baroque...)
+
+[genre_map]
+# raw genre (as found in your files) = [GENRE, optional STYLE].  [] = delete this genre
+# --- automatically mapped ---
+"Rock" = ["Rock"]   # 3 tracks
+"Folk Rock" = ["Folk", "Folk Rock"]   # 3 tracks
+"Klassik" = ["Classical"]   # 3 tracks
+"Classical" = ["Classical"]   # 3 tracks
+"Ballet" = ["Classical", "Ballet"]   # 2 tracks
+"Rap" = ["Hip-Hop", "Rap"]   # 1 tracks
+"Pop" = ["Pop"]   # 1 tracks
+"Hard Rock" = ["Rock", "Hard Rock"]   # 1 tracks
+"Cantautor" = ["Folk", "Cantautor"]   # 1 tracks
+"Rumba Catalana" = ["Latin", "Rumba Catalana"]   # 1 tracks
+"R&B" = ["R&B & Soul"]   # 1 tracks
+"Hip Hop" = ["Hip-Hop"]   # 1 tracks
+"RnB" = ["R&B & Soul"]   # 1 tracks
+"Soul" = ["R&B & Soul", "Soul"]   # 1 tracks
+"Electronica" = ["Electronic"]   # 1 tracks
+# --- NOT mapped: decide (uncomment and edit) ---
+"Other" = []   # 1 tracks
+
+[aliases]
+# any spelling = canonical name   (applies to artists, album artists, composers, conductors)
+"Beyonce" = "Beyoncé"
+"Beatles" = "The Beatles"
+# --- surname-only credits matched to a full name (only-in-composer ones are active) ---
+"Lennon" = "John Lennon"
+"McCartney" = "Paul McCartney"
+
+[sort_overrides]
+# name = sort name, e.g.
+# "Prince" = "Prince"
+# "Joan Manuel Serrat" = "Serrat, Joan Manuel"
