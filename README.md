@@ -36,15 +36,18 @@ music share mounted (SMB/NFS): pass the mounted path to `scan_tags.py`. Note: pa
 
 ## Workflow
 
+One shell script per step. The library path (`/volume1/musica/Music server/iTunes`) is set in
+`config.sh`. Extra arguments are passed through to the Python script.
+
 ```
-python scan_tags.py /music --csv tags.csv     # 1. first run reads everything; later runs only changed files
-python analyze_tags.py --fuzzy                # 2. read report.md, review schema.proposed.toml
-cp schema.proposed.toml schema.toml           #    ...edit: unmapped genres, aliases, keep_together
-python propose_changes.py                     # 3. -> changes.csv  (review in LibreOffice/Excel)
-python apply_changes.py changes.csv           # 4a. dry run
-python apply_changes.py changes.csv --apply --limit 20   # 4b. try on 20 files, check in your player
-python apply_changes.py changes.csv --apply   # 4c. everything
-python apply_changes.py --undo undo_20261020_140000.jsonl --apply   # if needed
+./1_scan.sh                       # 1. -> tags.sqlite, tags.csv (later runs only re-read changed files; --full for all)
+./2_analyze.sh                    # 2. -> report.md, schema.proposed.toml
+cp schema.proposed.toml schema.toml   #    ...edit: unmapped genres, aliases, keep_together
+./3_propose.sh                    # 3. -> changes.csv  (review in LibreOffice/Excel)
+./4_apply.sh                      # 4a. dry run
+./4_apply.sh --apply --limit 20   # 4b. try on 20 files, check in your player
+./4_apply.sh --apply              # 4c. everything
+./5_undo.sh undo_20261020_140000.jsonl --apply   # if needed
 ```
 
 Iterate: edit `schema.toml` → `propose_changes.py` → apply. You can also work by field or folder:
