@@ -10,6 +10,9 @@ Four Python scripts and a web GUI. Nothing touches your files until step 4 is gi
 | 3 | `propose_changes.py` | `tags.sqlite`, `schema.toml` | `changes.csv` |
 | 4 | `apply_changes.py changes.csv --apply` | `changes.csv` | your files + `undo_*.jsonl` |
 
+Wrappers: `1_scan.sh` … `5_undo.sh` for the steps, `gui.sh` / `gui-local.sh` to serve the
+web interface, and `tunnel.ps1` to reach it from a Windows machine over SSH.
+
 Classical albums are renamed to `Composer - works (soloist | ORCH / conductor)`, e.g.
 `Beethoven - Symphonies Nos. 5 & 7 (BPhO / Herbert von Karajan)`.
 
@@ -76,9 +79,21 @@ The GUI runs the same scripts as subprocesses and shows their output live; it ne
 reimplements them. Writing to your music is a separate red button behind a confirmation
 — the plain one is a dry run.
 
-If the page does not open from another machine, the port is being filtered by the DSM
-firewall, not closed. See [docs/GUI.md](docs/GUI.md#giving-another-machine-access) —
-the quickest fix is an SSH tunnel, which needs no configuration at all.
+### Reaching it from another machine
+
+If the page does not open from your laptop, the port is being filtered by the DSM
+firewall, not closed — the server does bind every interface. The safest answer is not
+to open the port at all but to tunnel, which is what these two scripts are for:
+
+```
+./gui-local.sh      # on the NAS: listen on 127.0.0.1 only
+.\tunnel.ps1 -Start # on the Windows laptop: SSH tunnel + browser, starting it if needed
+```
+
+`tunnel.ps1` takes `-NasHost`, `-User`, `-Port`, `-LocalPort`, `-Token`, `-NoBrowser`;
+`Get-Help .\tunnel.ps1 -Full` explains them. The alternatives — opening TCP 8765 in the
+DSM firewall, or a DSM reverse proxy — are in
+[docs/GUI.md](docs/GUI.md#giving-another-machine-access).
 
 Tests: `python3 -m unittest discover gui/tests -t .`
 

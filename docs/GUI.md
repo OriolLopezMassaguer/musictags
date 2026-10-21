@@ -17,9 +17,9 @@ The UI is in Spanish; this document names each page as the UI does.
 ## Starting and stopping
 
 ```
-./gui.sh                      # 0.0.0.0:8765
+./gui.sh                      # 0.0.0.0:8765 -- the whole LAN, if the firewall allows it
+./gui-local.sh                # 127.0.0.1 only -- use with the SSH tunnel below
 ./gui.sh --port 9000
-./gui.sh --host 127.0.0.1     # NAS only, reachable through an SSH tunnel
 ./gui.sh --token secreto      # require ?t=secreto; --token with no value generates one
 ./gui.sh --debug              # Flask reloader; do not leave this on
 ```
@@ -39,15 +39,39 @@ kills your own session.
 The server binds `0.0.0.0`, so if the page does not open from your laptop the port is
 being filtered, not closed. Three ways round it, best first:
 
-**1. SSH tunnel — nothing to configure, and nothing exposed.** On the laptop:
+**1. SSH tunnel — nothing to configure, and nothing exposed.** This is the right
+default for a service that can rewrite your music library and has no login. Two scripts
+in the repo do it for you.
+
+On the NAS, bind the GUI to loopback only:
+
+```
+./gui-local.sh                 # = ./gui.sh --host 127.0.0.1
+./gui-local.sh --port 9000     # extra arguments pass through
+```
+
+On the Windows laptop, from a copy of the repo (or just the one file):
+
+```powershell
+.\tunnel.ps1                   # tunnel + browser, against a GUI already running
+.\tunnel.ps1 -Start            # also start it on the NAS if it is not up
+.\tunnel.ps1 -NasHost 192.168.1.3 -User oriol -LocalPort 9000 -Token secreto
+```
+
+`tunnel.ps1` checks that `ssh.exe` exists and that the local port is free, optionally
+starts the remote GUI, opens `ssh -N -L`, waits for the tunnel to answer, opens the
+browser, and tears the tunnel down on Ctrl+C. If `ssh` dies immediately — wrong user,
+SSH disabled in DSM — it says so instead of hanging. `-Start` detects whether the GUI
+is up by checking the **port**, not the process: this NAS has no `pgrep`, and the port
+is the thing you actually care about.
+
+By hand it is just:
 
 ```
 ssh -L 8765:127.0.0.1:8765 <user>@<nas-ip>
 ```
 
-then open <http://localhost:8765>. Pair it with `./gui.sh --host 127.0.0.1` so the GUI
-is not on the LAN at all. This is the right default for a service that can rewrite your
-music library and has no login.
+then open <http://localhost:8765>.
 
 **2. Open the port in DSM.** *Panel de control → Seguridad → Cortafuegos → Editar
 reglas → Crear*: Puertos → Personalizado → **TCP 8765**, IP de origen → Subred

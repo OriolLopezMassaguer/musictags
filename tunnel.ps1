@@ -22,7 +22,7 @@
     Puerto en este ordenador. Por defecto, el mismo que el remoto.
 
 .PARAMETER RepoPath
-    Carpeta del repo en el NAS, para -Start.
+    Carpeta del repo en el NAS. Solo se usa con -Start.
 
 .PARAMETER Token
     Si arrancaste la GUI con --token, pasalo aqui y la URL lo llevara.
@@ -66,8 +66,8 @@ $url    = 'http://localhost:{0}/{1}' -f $LocalPort, $(if ($Token) { "?t=$Token" 
 function Test-Listening {
     param([int] $TcpPort)
     $client = New-Object System.Net.Sockets.TcpClient
-    try   { $client.Connect('127.0.0.1', $TcpPort); return $true }
-    catch { return $false }
+    try     { $client.Connect('127.0.0.1', $TcpPort); return $true }
+    catch   { return $false }
     finally { $client.Dispose() }
 }
 
@@ -86,31 +86,30 @@ if (Test-Listening $LocalPort) {
 # --- arrancar la GUI en el NAS -----------------------------------------------
 if ($Start) {
     Write-Host "Comprobando la GUI en $NasHost ..." -ForegroundColor Cyan
-    # Se comprueba el puerto, no el proceso: es lo que de verdad importa, y el NAS
-    # no trae pgrep. El socket se cierra siempre para no dejar conexiones colgando.
-    $alive = "python3 -c `"import socket,sys" + [char]59 +
-             "s=socket.socket()" + [char]59 +
-             "r=s.connect_ex(('127.0.0.1',$Port))" + [char]59 +
-             "s.close()" + [char]59 + "sys.exit(0 if r==0 else 1)`""
+    # Se mira el puerto, no el proceso: es lo que de verdad importa, y este NAS no
+    # trae pgrep. El comando remoto no lleva ni una comilla doble, porque PowerShell
+    # 5.1 no las escapa bien al pasar argumentos a un .exe nativo como ssh.
+    $alive  = "netstat -tln | grep -q '127.0.0.1:$Port '"
     $remote = "cd '$RepoPath' && " +
-              "if $alive" + [char]59 + " then echo 'ya estaba corriendo'" + [char]59 + " " +
-              "else nohup ./gui-local.sh --port $Port >gui.log 2>&1 & sleep 8" + [char]59 + " " +
-              "if $alive" + [char]59 + " then echo arrancada" + [char]59 + " " +
-              "else echo 'NO ha arrancado; mira gui.log en el NAS'" + [char]59 + " exit 1" + [char]59 + " fi" + [char]59 + " fi"
+              "if $alive; then echo 'ya estaba corriendo'; " +
+              "else nohup ./gui-local.sh --port $Port >gui.log 2>&1 & sleep 8; " +
+              "if $alive; then echo arrancada; " +
+              "else echo 'NO ha arrancado; mira gui.log en el NAS'; exit 1; fi; fi"
+
     & $ssh.Source $target $remote
     if ($LASTEXITCODE -ne 0) { throw 'No se ha podido arrancar la GUI en el NAS.' }
 }
 
 # --- el tunel ----------------------------------------------------------------
 Write-Host ''
-Write-Host ("Tunel  localhost:{0}  ->  {1}:{2}" -f $LocalPort, $target, $Port) -ForegroundColor Green
+Write-Host ('Tunel  localhost:{0}  ->  {1}:{2}' -f $LocalPort, $target, $Port) -ForegroundColor Green
 Write-Host "       $url"
 Write-Host '       Ctrl+C para cerrarlo.'
 Write-Host ''
 
 $sshArgs = @(
-    '-N',                                   # solo reenvio de puertos, sin shell
-    '-o', 'ExitOnForwardFailure=yes',       # fallar si el puerto no se puede ceder
+    '-N',                               # solo reenvio de puertos, sin shell remota
+    '-o', 'ExitOnForwardFailure=yes',   # fallar si el puerto local no se puede ceder
     '-o', 'ServerAliveInterval=30',
     '-L', ('{0}:127.0.0.1:{1}' -f $LocalPort, $Port),
     $target
@@ -119,7 +118,7 @@ $sshArgs = @(
 $proc = Start-Process -FilePath $ssh.Source -ArgumentList $sshArgs -NoNewWindow -PassThru
 
 try {
-    # Esperar a que el tunel levante, sin dejar de mirar si ssh se ha muerto.
+    # Esperar a que el tunel levante, vigilando por si ssh se muere por el camino.
     $ready = $false
     foreach ($attempt in 1..40) {
         if ($proc.HasExited) { break }
@@ -128,22 +127,19 @@ try {
     }
 
     if ($proc.HasExited) {
-        throw ("ssh ha terminado con codigo {0}. Revisa el usuario, la IP y que el " +
-               "servicio SSH este activo en DSM (Panel de control -> Terminal y SNMP)." `
-               -f $proc.ExitCode)
+        throw ('ssh ha terminado con codigo {0}. Revisa el usuario y la IP, y que el ' +
+               'servicio SSH este activo en DSM (Panel de control -> Terminal y SNMP).' -f $proc.ExitCode)
     }
     if (-not $ready) {
         throw 'El tunel no responde. Puede que la GUI no este corriendo en el NAS: ' +
-              'prueba con -Start.'
+              'vuelve a lanzarlo con -Start.'
     }
 
     Write-Host 'Tunel abierto.' -ForegroundColor Green
     if (-not $NoBrowser) { Start-Process $url }
 
     $proc.WaitForExit()
-    if ($proc.ExitCode -ne 0) {
-        Write-Warning ('ssh ha salido con codigo {0}.' -f $proc.ExitCode)
-    }
+    if ($proc.ExitCode -ne 0) { Write-Warning ('ssh ha salido con codigo {0}.' -f $proc.ExitCode) }
 }
 finally {
     if (-not $proc.HasExited) {
@@ -153,6 +149,6 @@ finally {
     Write-Host 'Tunel cerrado.' -ForegroundColor Yellow
     if ($Start) {
         Write-Host 'La GUI sigue corriendo en el NAS. Para pararla:' -ForegroundColor DarkGray
-        Write-Host ('  ssh {0} "pkill -f ''[g]ui[.]app''"' -f $target) -ForegroundColor DarkGray
+        Write-Host ('  ssh {0} ''pkill -f "[g]ui[.]app"''' -f $target) -ForegroundColor DarkGray
     }
 }
