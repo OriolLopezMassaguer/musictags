@@ -9,7 +9,9 @@ Four Python scripts. Nothing touches your files until step 4 with `--apply`, and
 | 3 | `propose_changes.py` | `tags.sqlite`, `schema.toml` | `changes.csv` |
 | 4 | `apply_changes.py changes.csv --apply` | `changes.csv` | your files + `undo_*.jsonl` |
 
-The schema itself is described in [SCHEMA.md](SCHEMA.md).
+The schema itself is described in [SCHEMA.md](SCHEMA.md). Classical albums are renamed to
+`Composer - works (soloist | ORCH / conductor)`, e.g.
+`Beethoven - Symphonies Nos. 5 & 7 (BPhO / Herbert von Karajan)`.
 
 ## Install
 
@@ -68,8 +70,11 @@ Columns: `approve, confidence, rule, path, field, old, new`. Lists use ` || `.
   scan) the change is skipped.
 - Undo log is written *before* each file is modified.
 - Only the managed fields (artists, album artist, sort tags, composer, conductor, ensemble,
-  genre, style, work, movement, compilation) can be written. Titles, album, track numbers and
-  cover art are never touched.
+  genre, style, work, movement, compilation, and ALBUM for classical albums) can be written.
+  Titles, track numbers and cover art are never touched.
+- Classical album renaming is controlled by `[album] enabled` in the schema. A `schema.toml`
+  made before this feature has no `[album]` section, so re-run `analyze_tags.py` (or copy the
+  section from `schema.example.toml`).
 - MP3s are saved as ID3v2.4 (true multi-value). If an old player needs v2.3 set
   `id3_version = 3` (lists are then joined with `; `).
 - Back up the library (or at least a test folder) before the first big run anyway.

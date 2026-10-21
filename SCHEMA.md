@@ -36,8 +36,10 @@ from your own library by `analyze_tags.py` (genre map, name spellings, bands tha
 | MOVEMENTNAME | MVNM | MOVEMENTNAME | ©mvn | no | `Prélude` |
 | MOVEMENT | MVIN | MOVEMENT | ©mvi | no | `1` |
 
-(`----:` = `----:com.apple.iTunes:` freeform atoms.) Title, album, date, track numbers and
-artwork are read but never modified.
+| ALBUM | TALB | ALBUM | ©alb | no | `Beethoven - Symphonies Nos. 5 & 7 (BPhO / Herbert von Karajan)` |
+
+(`----:` = `----:com.apple.iTunes:` freeform atoms.) Title, date, track numbers and
+artwork are read but never modified. ALBUM is only rewritten for classical albums (see below).
 
 ## Rules
 
@@ -71,3 +73,34 @@ artwork are read but never modified.
   packed values like `Pop/Rock` are split first; ID3 numeric genres `(17)` are decoded.
 - Classical tracks with a known composer get the period as STYLE (`Baroque`, `Romantic`, `Modern`…).
 - If your player ignores STYLE, set `style_into_genre = true`.
+
+**Classical album names** (`[album]` section; only albums that look classical)
+
+```
+{composer} - {works} ({performers})
+
+Bach - Cello Suites Nos. 1–6 (Pablo Casals)                                  soloist
+Beethoven - Symphonies Nos. 5 & 7 (BPhO / Herbert von Karajan)               orchestra + conductor
+Beethoven - Violin Concerto, Op. 61 (Anne-Sophie Mutter; BPhO / Herbert von Karajan)   concerto: both
+Falla - El amor brujo & El sombrero de tres picos (OBNC / Josep Pons)
+Debussy, Satie, Albéniz - Clair de lune, Gymnopédie No. 1 & Asturias (Alexis Weissenberg)
+```
+
+- **Composer**: surname (`composer_name = "full"` for the full name); up to 3 composers, more → `Varios`.
+- **Works**: taken from WORK, or from titles like `Symphony No. 5, Op. 67: I. Allegro` /
+  `El amor brujo: Danza…`. Keys (`in C minor`, `en re menor`, `Es-Dur`) are dropped; the catalogue
+  number is kept when there is a single work. Same type → grouped: `Symphonies Nos. 5 & 7`,
+  `Cello Suites Nos. 1–6`. More than 3 → `A, B, etc.`
+- **Performers**: each credit (ARTIST/ARTISTS, CONDUCTOR, ENSEMBLE) is classified:
+  - *orchestra/ensemble* — name contains Orchestra, Orquesta, Orquestra, Philharmoni*, Symphon*,
+    Sinfon*, Ensemble, Quartet, Choir/Coro/Cor, Kammer, Chamber, Academy, Consort, Kapelle… →
+    shown as its **4-letter code** from `[orchestra_abbrev]` (the analyzer fills it with every
+    orchestra in your library; ~60 well-known ones are built in: BPhO, WPhO, LSyO, RCGO, ASMF, OBNC…);
+  - *conductor* — CONDUCTOR tag, `(cond.)`/`(dir.)` in the credit, or ~90 well-known conductors;
+  - *soloist* — everyone else (`(piano)`, `(cello)` annotations are stripped).
+  Only performers on ≥ 50 % of the album's tracks are named; composers are never listed as performers.
+- Detected conductors and orchestras are also written to CONDUCTOR / ENSEMBLE.
+- Two different albums that would get the same name are told apart by year (`[1962]`, `[1977]`),
+  else by the old album name. CD1/CD2 sub-folders are treated as one album.
+- Confidence *medium* (pre-approved) when composer and works were found in the tags/titles;
+  *low* when works are just the track titles or the composer was guessed.

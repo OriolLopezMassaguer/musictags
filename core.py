@@ -53,7 +53,7 @@ FIELD_MAP = {
 }
 FIELDS = list(FIELD_MAP)
 # Fields the toolkit is allowed to change. Everything else is read-only context.
-WRITABLE = {"artist", "artists", "albumartist", "artistsort", "albumartistsort",
+WRITABLE = {"album", "artist", "artists", "albumartist", "artistsort", "albumartistsort",
             "composer", "composersort", "conductor", "ensemble", "genre", "style",
             "work", "movementname", "movement", "compilation"}
 

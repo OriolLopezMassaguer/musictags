@@ -23,6 +23,7 @@ from collections import Counter, defaultdict
 from core import (FIELDS, TAXONOMY, composer_aliases, composer_period, dumps_toml_str,
                   genre_key, name_key, strip_accents, suggest_genre)
 from rules import DEFAULT_FEAT, DEFAULT_KEEP, DEFAULT_SPLIT, CreditSplitter
+from album_names import OrchestraCodes, classify
 
 GENRE_SPLIT = ["/", ";", ",", "|"]
 SEPARATOR_PROBES = {
@@ -133,7 +134,9 @@ def main():
             continue
         whole = naive.feat_re.split(v)[0].strip()
         if any(name_key(p) in standalone for p in main):
-            continue                                   # e.g. 'Beyoncé & Jay-Z': parts exist alone -> split
+            continue
+        if any(classify(p, set())[1] != "soloist" for p in main):
+            continue                                   # 'Orchestra, Conductor' is a list, not a band                                   # e.g. 'Beyoncé & Jay-Z': parts exist alone -> split
         if cnt >= args.min_band or name_key(whole) in albumartists:
             keep.add(whole)                            # e.g. 'Simon & Garfunkel'
         else:
@@ -262,6 +265,33 @@ def main():
     for tok, c in unmapped:
         R.append(f"| {tok} | {c} | **?** | |")
 
+    # ---------------- performers: soloists / orchestras / conductors ----------------
+    cond_tag = {name_key(x) for _, _, t in ok for x in t.get("conductor", [])}
+    roles = {"soloist": Counter(), "ensemble": Counter(), "conductor": Counter()}
+    for _, _, t in ok:
+        comp_keys = {name_key(x) for v in t.get("composer", []) for x in comp_split.split_list(v)}
+        is_cl = any(k in calias for k in comp_keys) or any(
+            suggest_genre(tok)[0] == "Classical" for v in t.get("genre", []) for tok in split_genres(v))
+        if not is_cl:
+            continue
+        names = [x for v in t.get("artist", []) for x in sum(splitter.split(v), [])]
+        names += t.get("artists", []) + t.get("conductor", []) + t.get("ensemble", [])
+        seen = set()
+        for raw in names:
+            nm, role = classify(raw, cond_tag)
+            k = name_key(nm)
+            if k in seen or k in comp_keys or k in calias:
+                continue
+            seen.add(k)
+            roles[role][nm] += 1
+    codes = OrchestraCodes().unique_table([e for e, _ in roles["ensemble"].most_common()])
+    R += ["", "## Performers (for classical album names)", "",
+          f"* Orchestras / ensembles: {len(roles['ensemble'])}  ·  conductors: {len(roles['conductor'])}"
+          f"  ·  other performers (treated as soloists): {len(roles['soloist'])}", "",
+          "| orchestra / ensemble | tracks | code |", "|---|---|---|"]
+    R += [f"| {e} | {c} | {codes[e]} |" for e, c in roles["ensemble"].most_common(150)]
+    R += ["", "Conductors: " + ", ".join(f"{x} ({c})" for x, c in roles["conductor"].most_common(60))]
+
     if ambiguous:
         R += ["", "## Ambiguous multi-artist credits (will be SPLIT unless you add them to keep_together)", ""]
         R += [f"* {v} ({c})" for v, c in sorted(ambiguous, key=lambda x: -x[1])[:150]]
@@ -329,6 +359,27 @@ def main():
           for tok, (val, c) in sorted(gmap.items(), key=lambda x: -x[1][1])],
         "# --- NOT mapped: decide (uncomment and edit) ---",
         *[f"# {q(tok)} = [\"?\"]   # {c} tracks" for tok, c in unmapped],
+        "",
+        "[album]",
+        "# Classical album names:  Bach - Cello Suites Nos. 1–6 (Pablo Casals)",
+        "#                         Beethoven - Symphonies Nos. 5 & 7 (BPhO / Herbert von Karajan)",
+        "enabled = true",
+        'scope = "classical"           # "classical" = only classical albums | "all"',
+        'format = "{composer} - {works} ({performers})"',
+        'composer_name = "surname"     # "surname" (Bach) | "full" (Johann Sebastian Bach)',
+        'soloist_name = "full"         # "full" | "surname"',
+        'conductor_name = "full"       # "full" | "surname"',
+        "max_composers = 3             # more composers -> various_composers",
+        'various_composers = "Varios"',
+        "max_works = 3                 # more works -> 'A, B, etc.'",
+        "max_soloists = 2",
+        'others = "etc."',
+        "min_share = 0.5               # performer must appear on >= 50% of the album's tracks",
+        "fill_conductor_ensemble = true  # also write CONDUCTOR / ENSEMBLE tags detected in the credits",
+        "",
+        "[orchestra_abbrev]",
+        "# orchestra / ensemble = 4-letter code used in album names (edit freely)",
+        *[f"{q(e)} = {q(c)}   # {roles['ensemble'][e]} tracks" for e, c in codes.items()],
         "",
         "[aliases]",
         "# any spelling = canonical name   (applies to artists, album artists, composers, conductors)",

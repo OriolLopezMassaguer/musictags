@@ -22,6 +22,23 @@ from collections import Counter, defaultdict
 from core import (LIST_SEP, TAXONOMY, WRITABLE, band_sort, composer_aliases, composer_period,
                   genre_key, load_config, name_key, nice_case, person_sort)
 from rules import DEFAULT_FEAT, DEFAULT_SPLIT, Canon, CreditSplitter, dedupe
+from album_names import (OrchestraCodes, build_name, classify, composer_text, performers_text,
+                         summarize_works, work_of_title)
+
+DISC_DIR = re.compile(r"^(?:cd|disc|disk|disco|disque|disc\s*\d+\s*of)\s*\d+\b.*$", re.I)
+
+
+def album_key(path, t):
+    """(folder, album) - CD1/CD2 sub-folders count as one album."""
+    d = os.path.dirname(path)
+    if DISC_DIR.match(os.path.basename(d)):
+        d = os.path.dirname(d)
+    return d, (t.get("album") or [""])[0]
+
+
+def eff(t, p, f):
+    """Value after the proposals made so far."""
+    return p[f][0] if f in p else t.get(f, [])
 
 ROMAN = r"(?:[IVXLC]+|\d+)"
 
@@ -180,10 +197,9 @@ class Proposer:
         """tracks: list of (path, tags, proposals, main_artists). Adds album-artist proposals."""
         groups = defaultdict(list)
         for item in tracks:
-            path, t = item[0], item[1]
-            album = (t.get("album") or [""])[0]
-            if album:
-                groups[(os.path.dirname(path), album)].append(item)
+            key = album_key(item[0], item[1])
+            if key[1]:
+                groups[key].append(item)
         va = self.a.get("various_artists", "Various Artists")
         for items in groups.values():
             existing = Counter(self.canon(t["albumartist"][0]) for _, t, _, _ in items if t.get("albumartist"))
@@ -218,6 +234,120 @@ class Proposer:
                     s = self.sortname(target, person=target in self.period)
                     if s != target:
                         p["albumartistsort"] = ([s], "medium", "albumartistsort: from canonical name")
+
+    # ------------------------------------------------------------------ album names
+    def album_names(self, tracks):
+        """Classical albums -> '{composer} - {works} ({performers})'. Also fills CONDUCTOR,
+        ENSEMBLE and WORK when they can be read from the credits/titles."""
+        cfg = self.cfg.get("album", {})
+        if not cfg.get("enabled", False):
+            return
+        codes = OrchestraCodes(self.cfg.get("orchestra_abbrev", {}))
+        groups = defaultdict(list)
+        for item in tracks:
+            key = album_key(item[0], item[1])
+            if key[1]:
+                groups[key].append(item)
+
+        planned = {}                                        # group key -> (name, conf, rule, items)
+        for key, items in groups.items():
+            items = sorted(items, key=lambda x: x[0])
+            comps_by_track = [eff(t, p, "composer") for _, t, p, _ in items]
+            n = len(items)
+            classical = sum("Classical" in eff(t, p, "genre") for _, t, p, _ in items) > n / 2 or \
+                all(c and all(self.is_classical_composer(x) for x in c) for c in comps_by_track)
+            if cfg.get("scope", "classical") == "classical" and not classical:
+                continue
+            composers = Counter(x for c in comps_by_track for x in c)
+            if not composers:
+                continue
+            comp_keys = {name_key(x) for x in composers}
+
+            # ---- works ----
+            works, hows, pending = [], [], []
+            for i, (_, t, p, _) in enumerate(items):
+                w = eff(t, p, "work")
+                if w:
+                    works.append(w[0]); hows.append("tag"); continue
+                title = (t.get("title") or [""])[0]
+                w, how = work_of_title(title, comps_by_track[i])
+                works.append(w); hows.append(how)
+                if not w:
+                    pending.append(i)
+            prefixes = {}
+            for i in pending:
+                title = (items[i][1].get("title") or [""])[0]
+                for c in comps_by_track[i]:
+                    title = re.sub(rf"^{re.escape(c.split()[-1])}\s*:\s*", "", title)
+                m = re.match(r"^(.{3,}?)\s*:\s*\S", title)
+                prefixes[i] = (m.group(1).strip() if m else None, title)
+            for i, (pr, title) in prefixes.items():
+                if pr:                                        # 'Work: section'
+                    works[i], hows[i] = pr, "prefix"
+                else:
+                    works[i], hows[i] = title, "title"
+            for i, (_, t, p, _) in enumerate(items):
+                if hows[i] in ("movement", "prefix") and not eff(t, p, "work"):
+                    p["work"] = ([works[i]], "low", "work: parsed from title")
+
+            # ---- performers ----
+            cond_names = {name_key(x) for _, t, p, _ in items for x in eff(t, p, "conductor")}
+            sol, ens, con = Counter(), Counter(), Counter()
+            for _, t, p, main in items:
+                credits = eff(t, p, "artists") or main or []
+                names = list(credits) + eff(t, p, "conductor") + eff(t, p, "ensemble")
+                seen, tr_ens, tr_con = set(), [], []
+                for raw in names:
+                    name, role = classify(raw, cond_names)
+                    k = name_key(name)
+                    if k in seen or k in comp_keys or self.is_classical_composer(self.canon(name)):
+                        continue
+                    seen.add(k)
+                    name = self.canon(name)
+                    {"soloist": sol, "ensemble": ens, "conductor": con}[role][name] += 1
+                    (tr_ens if role == "ensemble" else tr_con if role == "conductor" else []).append(name)
+                if cfg.get("fill_conductor_ensemble", True):
+                    if tr_con and not eff(t, p, "conductor"):
+                        p["conductor"] = (tr_con, "medium", "conductor: detected in artist credits")
+                    if tr_ens and not eff(t, p, "ensemble"):
+                        p["ensemble"] = (tr_ens, "medium", "ensemble: detected in artist credits")
+
+            name = build_name(cfg.get("format", "{composer} - {works} ({performers})"),
+                              composer_text(composers, cfg, self.sort_over),
+                              summarize_works(works, int(cfg.get("max_works", 3)), cfg.get("others", "etc.")),
+                              performers_text(sol, ens, con, codes, cfg, n))
+            guessed = any(p.get("composer", (None, "high"))[1] == "low" for _, _, p, _ in items)
+            good = all(comps_by_track) and not guessed and all(h in ("tag", "movement", "prefix") for h in hows)
+            rule = "album: classical name (composer - works - performers)"
+            if guessed:
+                rule += "; composer guessed"
+            elif not good:
+                rule += "; works taken from titles"
+            planned[key] = [name, "medium" if good else "low", rule, items]
+
+        # ---- different albums must not end up with the same name ----
+        by_name = defaultdict(list)
+        for key, v in planned.items():
+            by_name[fold_key(v[0])].append(key)
+        for keys in by_name.values():
+            if len(keys) < 2:
+                continue
+            years = {k: next((d[0][:4] for _, t, p, _ in planned[k][3] for d in [t.get("date", [])] if d), "")
+                     for k in keys}
+            distinct_years = len(set(years.values())) == len(keys) and all(years.values())
+            for i, k in enumerate(sorted(keys)):
+                suffix = years[k] if distinct_years else (k[1] if len({kk[1] for kk in keys}) == len(keys) else str(i + 1))
+                planned[k][0] += f" [{suffix}]"
+                planned[k][2] += "; disambiguated"
+
+        for key, (name, conf, rule, items) in planned.items():
+            for _, t, p, _ in items:
+                if t.get("album") != [name]:
+                    p["album"] = ([name], conf, rule)
+
+
+def fold_key(s):
+    return name_key(s)
 
 
 def roman_to_int(s):
@@ -256,6 +386,7 @@ def main():
         p, main_artists = prop.track(t)
         tracks.append((path, t, p, main_artists))
     prop.albums(tracks)
+    prop.album_names(tracks)
 
     stats, conf_stats, n = Counter(), Counter(), 0
     with open(args.out, "w", newline="", encoding="utf-8-sig") as fh:

@@ -74,10 +74,11 @@ classical_period_style = true # Classical tracks with a known composer get STYLE
 [genre_map]
 # raw genre (as found in your files) = [GENRE, optional STYLE].  [] = delete this genre
 # --- automatically mapped ---
+"Classical" = ["Classical"]   # 15 tracks
+"Klassik" = ["Classical"]   # 6 tracks
 "Rock" = ["Rock"]   # 3 tracks
 "Folk Rock" = ["Folk", "Folk Rock"]   # 3 tracks
-"Klassik" = ["Classical"]   # 3 tracks
-"Classical" = ["Classical"]   # 3 tracks
+"Clásica" = ["Classical"]   # 3 tracks
 "Ballet" = ["Classical", "Ballet"]   # 2 tracks
 "Rap" = ["Hip-Hop", "Rap"]   # 1 tracks
 "Pop" = ["Pop"]   # 1 tracks
@@ -91,6 +92,28 @@ classical_period_style = true # Classical tracks with a known composer get STYLE
 "Electronica" = ["Electronic"]   # 1 tracks
 # --- NOT mapped: decide (uncomment and edit) ---
 "Other" = []   # 1 tracks
+
+[album]
+# Classical album names:  Bach - Cello Suites Nos. 1–6 (Pablo Casals)
+#                         Beethoven - Symphonies Nos. 5 & 7 (BPhO / Herbert von Karajan)
+enabled = true
+scope = "classical"           # "classical" = only classical albums | "all"
+format = "{composer} - {works} ({performers})"
+composer_name = "surname"     # "surname" (Bach) | "full" (Johann Sebastian Bach)
+soloist_name = "full"         # "full" | "surname"
+conductor_name = "full"       # "full" | "surname"
+max_composers = 3             # more composers -> various_composers
+various_composers = "Varios"
+max_works = 3                 # more works -> 'A, B, etc.'
+max_soloists = 2
+others = "etc."
+min_share = 0.5               # performer must appear on >= 50% of the album's tracks
+fill_conductor_ensemble = true  # also write CONDUCTOR / ENSEMBLE tags detected in the credits
+
+[orchestra_abbrev]
+# orchestra / ensemble = 4-letter code used in album names (edit freely)
+"Berliner Philharmoniker" = "BPhO"   # 9 tracks
+"Orquestra Simfònica de Barcelona i Nacional de Catalunya" = "OBNC"   # 3 tracks
 
 [aliases]
 # any spelling = canonical name   (applies to artists, album artists, composers, conductors)
