@@ -1,5 +1,9 @@
 # Tagging schema
 
+> The rules themselves. See [README](README.md) for the workflow,
+> [docs/PIPELINE.md](docs/PIPELINE.md) for the steps and file formats, and
+> [docs/GUI.md](docs/GUI.md) for editing this schema in the browser.
+
 The schema has a fixed **structure** (which tag holds what) and **vocabulary** derived
 from your own library by `analyze_tags.py` (genre map, name spellings, bands that must not be split).
 

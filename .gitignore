@@ -9,3 +9,4 @@ changes.csv
 undo_*.jsonl
 *.bak
 gui/logs/
+gui.log
