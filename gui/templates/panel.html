@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% from "_step.html" import step_form %}
+{% block title %}Panel · musictags{% endblock %}
+{% block body %}
+
+<h1>Panel</h1>
+<p class="lede">Estado del pipeline y de la biblioteca. Cada paso se lanza desde aquí;
+los scripts <span class="mono">1_scan.sh</span>…<span class="mono">5_undo.sh</span>
+siguen haciendo exactamente lo mismo desde el terminal.</p>
+
+{% if health.problems %}
+<div class="note bad">
+  <b>Hay que arreglar el esquema antes de proponer</b>
+  <ul>{% for p in health.problems %}<li>{{ p }}</li>{% endfor %}</ul>
+  {% if health.missing_sections %}
+  <p style="margin:.6rem 0 0"><a class="btn" href="{{ url_for('merge_page') }}">Fusionar la propuesta →</a></p>
+  {% endif %}
+</div>
+{% elif health.live.exists %}
+<div class="note ok">schema.toml está completo ({{ health.sections|length }} secciones,
+  actualizado {{ health.live.age }}).</div>
+{% endif %}
+
+{% if library %}
+<div class="grid">
+  <div class="stat"><b>{{ "{:,}".format(library.tracks).replace(",", ".") }}</b>
+    <span>pistas · {{ library.bytes_h }}{% if library.errors %} · {{ library.errors }} con error{% endif %}</span></div>
+  <div class="stat"><b>{{ library.albums }}</b><span>álbumes (CD1/CD2 cuentan como uno)</span></div>
+  <div class="stat"><b>{{ library.classical_pct }} %</b>
+    <span>parece clásica — {{ "{:,}".format(library.classical).replace(",", ".") }} pistas</span></div>
+  <div class="stat"><b>{% for f, n in library.formats.items() %}{{ f }}&nbsp;{{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</b>
+    <span>formatos</span></div>
+</div>
+<p class="muted small" style="margin:.5rem 0 1.4rem">
+  <span class="mono">{{ library.root }}</span> · escaneado {{ library.scanned.age }}</p>
+{% else %}
+<div class="note warn">Todavía no hay <span class="mono">tags.sqlite</span>.
+  Empieza por el paso 1.</div>
+{% endif %}
+
+<h2>Pasos</h2>
+{% for step in pipeline %}
+<div class="card">
+  <div class="spread">
+    <h3 style="margin:0">{{ step.n }}. {{ step.label }}
+      {% if step.stale %}<span class="pill bad">obsoleto</span>
+      {% elif step.done %}<span class="pill ok">hecho</span>{% endif %}
+      {% if step.missing %}<span class="pill">falta {{ step.missing|join(', ') }}</span>{% endif %}
+    </h3>
+    <span class="muted small">
+      {%- for o in step.outputs -%}
+        {{ o.name }}{% if o.exists %} · {{ o.size_h }} · {{ o.when }}{% else %} · no existe{% endif %}
+        {%- if not loop.last %} | {% endif %}
+      {%- endfor -%}
+    </span>
+  </div>
+  <p class="muted small" style="margin:.2rem 0 .4rem">{{ step.desc }}</p>
+  {% if step.stale %}
+    <div class="note warn" style="margin:.4rem 0">
+      {{ step.outputs|map(attribute='name')|join(', ') }} es más antiguo que
+      {{ step.stale_because|join(', ') }}: vuelve a ejecutar este paso.</div>
+  {% endif %}
+  <details class="sect"><summary class="small">Opciones y ejecución</summary>
+    {{ step_form(step, undo_logs) }}
+  </details>
+</div>
+{% endfor %}
+
+{% if library %}
+<h2>Cobertura de campos</h2>
+<p class="muted small">Qué porcentaje de pistas tiene hoy cada campo. Los que están a
+  cero son justo los que el pipeline rellena.</p>
+<div class="card">
+<table>
+  <tr><th>Campo</th><th class="num">Pistas</th><th class="num">%</th><th style="width:45%"></th></tr>
+  {% for c in library.coverage %}
+  <tr>
+    <td class="mono">{{ c.field }}</td>
+    <td class="num">{{ c.n }}</td>
+    <td class="num">{{ c.pct }}</td>
+    <td><div style="background:var(--line);border-radius:3px;height:8px;width:100%">
+      <div style="background:{{ 'var(--ok)' if c.pct > 80 else 'var(--warn)' if c.pct > 10 else 'var(--bad)' }};
+                  height:8px;border-radius:3px;width:{{ c.pct }}%"></div></div></td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+{% endblock %}

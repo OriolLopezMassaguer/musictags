@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Fusionar esquema · musictags{% endblock %}
+{% block body %}
+
+<h1>Fusionar esquema</h1>
+<p class="lede">El paso 2 reescribe <span class="mono">schema.proposed.toml</span> entero
+cada vez, así que copiarlo encima de <span class="mono">schema.toml</span> borra lo que
+hayas decidido a mano. Aquí se decide diferencia a diferencia. Por defecto se
+<b>añade</b> lo que el análisis ha encontrado nuevo en la biblioteca y se
+<b>conserva</b> todo lo que tú cambiaste.</p>
+
+{% if error %}
+  <div class="note warn">{{ error }}</div>
+{% elif not diffs %}
+  <div class="note ok">No hay diferencias: <span class="mono">schema.toml</span> ya
+    incluye todo lo que propone el análisis.</div>
+{% else %}
+
+<div class="toolbar row">
+  <span><b id="count">{{ summary.total }}</b> diferencias
+    · <span class="muted">{{ summary.adds }} se añadirían</span></span>
+  <span class="right"></span>
+  <button class="tiny" onclick="setAll('theirs')">Todo lo propuesto</button>
+  <button class="tiny" onclick="setAll('mine')">Todo lo mío</button>
+  <button class="tiny" onclick="setAll('default')">Volver a lo recomendado</button>
+  <button class="primary" id="apply">Fusionar en schema.toml</button>
+</div>
+
+{% for d in diffs %}
+<div class="card diffrow" data-id="{{ d.id }}" data-default="{{ d.default }}">
+  <div class="spread">
+    <h3 style="margin:0">
+      <span class="mono">[{{ d.section }}]</span>
+      {% if d.key %}<span class="mono">{{ d.key }}</span>{% endif %}
+      <span class="pill">{{ {'section':'sección','option':'opción','entry':'entrada','list':'lista'}[d.kind] }}</span>
+    </h3>
+    <span class="muted small">{{ d.note }}</span>
+  </div>
+  {% if d.comment %}<p class="muted small" style="margin:.2rem 0">{{ d.comment }}</p>{% endif %}
+
+  {% if d.kind == 'section' %}
+    <div class="diff">{{ (d.theirs or d.mine or [])|join('\n') }}</div>
+  {% elif d.kind == 'list' %}
+    <div class="grid" style="margin-top:.4rem">
+      <div><b class="small">Solo tuyas ({{ d.only_mine|length }})</b>
+        <div class="diff" style="max-height:170px">{% for x in d.only_mine[:40] %}<span class="del">- {{ x }}</span>
+{% endfor %}{% if d.only_mine|length > 40 %}…{% endif %}</div></div>
+      <div><b class="small">Solo propuestas ({{ d.only_theirs|length }})</b>
+        <div class="diff" style="max-height:170px">{% for x in d.only_theirs[:40] %}<span class="add">+ {{ x }}</span>
+{% endfor %}{% if d.only_theirs|length > 40 %}…{% endif %}</div></div>
+    </div>
+    <p class="muted small">{{ d.shared }} coinciden en las dos.</p>
+  {% else %}
+    <table style="margin-top:.3rem">
+      <tr><td style="width:7em"><b class="small">Tuyo</b></td>
+          <td class="mono trunc">{{ d.mine if d.mine is not none else '— (no lo tienes)' }}</td></tr>
+      <tr><td><b class="small">Propuesto</b></td>
+          <td class="mono trunc new">{{ d.theirs if d.theirs is not none else '— (ya no aparece)' }}</td></tr>
+    </table>
+  {% endif %}
+
+  <div class="row" style="margin-top:.5rem">
+    <label class="check"><input type="radio" name="c-{{ loop.index }}" value="mine"
+      {{ 'checked' if d.default == 'mine' }}> Conservar lo mío</label>
+    <label class="check"><input type="radio" name="c-{{ loop.index }}" value="theirs"
+      {{ 'checked' if d.default == 'theirs' }}> Usar lo propuesto</label>
+    {% if d.kind == 'list' %}
+    <label class="check"><input type="radio" name="c-{{ loop.index }}" value="union"> Unir las dos</label>
+    {% endif %}
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+<script>
+function choices() {
+  const out = {};
+  document.querySelectorAll('.diffrow').forEach((row) => {
+    const picked = row.querySelector('input[type=radio]:checked');
+    out[row.dataset.id] = picked ? picked.value : row.dataset.default;
+  });
+  return out;
+}
+function setAll(mode) {
+  document.querySelectorAll('.diffrow').forEach((row) => {
+    const want = mode === 'default' ? row.dataset.default : mode;
+    const target = row.querySelector(`input[value="${want}"]`)
+                || row.querySelector(`input[value="${row.dataset.default}"]`);
+    if (target) target.checked = true;
+  });
+}
+document.getElementById('apply')?.addEventListener('click', async (e) => {
+  e.target.disabled = true;
+  const d = await api.post('/merge/apply', choices());
+  if (d.ok) { toast(`Fusionadas ${d.applied.length} diferencias en schema.toml.`); setTimeout(() => location.reload(), 900); }
+  else { toast(d.error || 'No se ha podido fusionar.', 'bad'); e.target.disabled = false; }
+});
+</script>
+{% endblock %}

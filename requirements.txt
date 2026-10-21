@@ -1,2 +1,5 @@
 mutagen>=1.45
 tomli>=2.0; python_version < "3.11"
+# solo para la GUI (./gui.sh); los cuatro pasos del pipeline no las necesitan
+flask>=3.0
+markdown>=3.5

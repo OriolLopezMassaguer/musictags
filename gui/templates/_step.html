@@ -1,0 +1,59 @@
+{# One step: its flags as controls, plus the buttons that launch it. #}
+{% macro step_form(step, undo_logs, compact=False) %}
+<div data-step-form data-step="{{ step.id }}">
+  {% for a in step.args %}
+    {% if a.type == 'bool' %}
+      <div class="field">
+        <label class="check">
+          <input type="checkbox" data-param="{{ a.name }}" {{ 'checked' if a.default }}>
+          <span>{{ a.label }}{% if a.help %}<span class="help">{{ a.help }}</span>{% endif %}</span>
+        </label>
+      </div>
+    {% elif a.type == 'int' %}
+      <div class="field">
+        <label for="{{ step.id }}-{{ a.name }}">{{ a.label }}</label>
+        <input type="number" id="{{ step.id }}-{{ a.name }}" data-param="{{ a.name }}"
+               value="{{ a.default }}" min="{{ a.min }}" max="{{ a.max }}" style="width:7em">
+        {% if a.help %}<div class="help">{{ a.help }}</div>{% endif %}
+      </div>
+    {% elif a.type == 'fields' %}
+      <div class="field">
+        <label>{{ a.label }}</label>
+        <div class="chips">
+          {% for c in a.choices %}
+            <label class="chip"><input type="checkbox" data-param="{{ a.name }}"
+                   data-multi="1" value="{{ c }}"> {{ c }}</label>
+          {% endfor %}
+        </div>
+        {% if a.help %}<div class="help">{{ a.help }}</div>{% endif %}
+      </div>
+    {% elif a.type == 'path' %}
+      <div class="field">
+        <label for="{{ step.id }}-{{ a.name }}">{{ a.label }}</label>
+        <input type="text" id="{{ step.id }}-{{ a.name }}" data-param="{{ a.name }}"
+               placeholder="toda la biblioteca" style="width:100%;max-width:38em">
+        {% if a.help %}<div class="help">{{ a.help }}</div>{% endif %}
+      </div>
+    {% elif a.type == 'undolog' %}
+      <div class="field">
+        <label for="{{ step.id }}-{{ a.name }}">{{ a.label }}</label>
+        <select data-param="{{ a.name }}" id="{{ step.id }}-{{ a.name }}">
+          {% for log in undo_logs %}<option value="{{ log }}">{{ log }}</option>{% endfor %}
+          {% if not undo_logs %}<option value="">(no hay registros)</option>{% endif %}
+        </select>
+      </div>
+    {% endif %}
+  {% endfor %}
+  <div class="row" style="margin-top:10px">
+    {% if step.writes %}
+      <button data-run="{{ step.id }}">Simular</button>
+      <button class="danger" data-run="{{ step.id }}" data-write="1">
+        {{ 'Deshacer de verdad' if step.id == 'undo' else 'Aplicar de verdad' }}</button>
+      <span class="muted small">Sin confirmar no se escribe nada.</span>
+    {% else %}
+      <button class="primary" data-run="{{ step.id }}">Ejecutar</button>
+      <span class="muted small mono">{{ step.sh }}</span>
+    {% endif %}
+  </div>
+</div>
+{% endmacro %}

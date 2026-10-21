@@ -7,3 +7,5 @@ schema.toml
 schema.proposed.toml
 changes.csv
 undo_*.jsonl
+*.bak
+gui/logs/

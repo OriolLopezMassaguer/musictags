@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}musictags{% endblock %}</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>&#127925;</text></svg>">
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+<script defer src="{{ url_for('static', filename='app.js') }}"></script>
+</head>
+<body>
+<header class="top">
+  <span class="brand">musictags</span>
+  <nav>
+    <a href="{{ url_for('panel') }}" class="{{ 'on' if nav=='panel' }}">Panel</a>
+    <a href="{{ url_for('merge_page') }}" class="{{ 'on' if nav=='merge' }}">Fusionar</a>
+    <a href="{{ url_for('schema_page') }}" class="{{ 'on' if nav=='schema' }}">Esquema</a>
+    <a href="{{ url_for('changes_page') }}" class="{{ 'on' if nav=='changes' }}">Cambios</a>
+    <a href="{{ url_for('report_page') }}" class="{{ 'on' if nav=='report' }}">Informe</a>
+  </nav>
+</header>
+
+<main>{% block body %}{% endblock %}</main>
+
+<div id="drawer" {% if current_job %}data-job="{{ current_job.id }}"
+     data-running="{{ '1' if current_job.running else '0' }}"{% endif %}>
+  <div class="bar">
+    <span class="dot {{ 'run' if current_job and current_job.running }}"></span>
+    <span class="label">{% if current_job %}{{ current_job.step }}{% else %}Registro de ejecución{% endif %}</span>
+    <span class="right"></span>
+    <button class="tiny danger stop" {{ '' if current_job and current_job.running else 'hidden' }}>Parar</button>
+    <span class="muted small">pulsa para abrir/cerrar</span>
+  </div>
+  <pre></pre>
+</div>
+</body>
+</html>

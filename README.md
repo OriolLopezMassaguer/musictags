@@ -55,6 +55,35 @@ cp schema.proposed.toml schema.toml   #    ...edit: unmapped genres, aliases, ke
 Iterate: edit `schema.toml` → `propose_changes.py` → apply. You can also work by field or folder:
 `propose_changes.py --only genre,style` or `--path /music/Classical`.
 
+Step 2 rewrites `schema.proposed.toml` from scratch every run, so a plain `cp` over
+`schema.toml` throws away the decisions you made by hand. The GUI's *Fusionar* page
+merges the two instead; see below.
+
+## GUI
+
+The same four steps in a browser, from any machine on the LAN:
+
+```
+pip install -r requirements.txt     # adds flask + markdown
+./gui.sh                            # -> http://<nas-ip>:8765
+./gui.sh --token secreto            # require ?t=secreto
+```
+
+| Page | What it is for |
+|---|---|
+| **Panel** | State of every step, whether its output is stale, library stats, and the run buttons (with each script's flags as controls). |
+| **Fusionar** | Merge `schema.proposed.toml` into `schema.toml` difference by difference, instead of `cp`. New sections and entries are added, your own edits are kept. |
+| **Esquema** | Edit `schema.toml` as forms and searchable tables. Only the lines you change are rewritten -- comments, order and track counts stay. |
+| **Cambios** | Review `changes.csv` grouped by album, filter by field/confidence/rule, approve in bulk, edit a proposed value. Writes back the `approve` column only, so `./4_apply.sh` still works. |
+| **Informe** | `report.md` rendered, with a section index. |
+
+Nothing is written to your music until you press *Aplicar de verdad*, which is a
+separate red button behind a confirmation; the plain button is a dry run.
+The GUI never reimplements the pipeline -- it runs the same scripts as subprocesses
+and shows their output live.
+
+Tests: `python3 -m unittest discover gui/tests -t .`
+
 ### Reviewing changes.csv
 
 Columns: `approve, confidence, rule, path, field, old, new`. Lists use ` || `.

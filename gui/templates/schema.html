@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+{% from "_step.html" import step_form %}
+{% block title %}Esquema · musictags{% endblock %}
+{% block body %}
+
+{% if error %}
+  <h1>Esquema</h1>
+  <div class="note warn">{{ error }}</div>
+{% else %}
+
+<div class="spread">
+  <h1>Esquema</h1>
+  <span class="muted small">schema.toml · {{ info.size_h }} · {{ info.age }}</span>
+</div>
+<p class="lede">Las opciones y las tablas de <span class="mono">schema.toml</span>.
+Al guardar se reescriben solo las líneas que cambies: los comentarios, el orden y los
+recuentos de pistas se quedan como están.</p>
+
+<div class="toolbar row">
+  <span id="pending" class="muted">Sin cambios</span>
+  <span class="right"></span>
+  <button class="tiny" id="preview" disabled>Ver diff</button>
+  <button class="primary" id="save" disabled>Guardar</button>
+</div>
+<div id="diffbox" hidden><div class="diff" id="diff"></div></div>
+
+<div class="layout">
+  <div class="sidenav">
+    {% for s in sections %}
+      <a href="#s-{{ s.name }}">{{ s.name }}
+        <span class="muted small">{{ s.n }}{% if s.pending %} · {{ s.pending }}?{% endif %}</span></a>
+    {% endfor %}
+  </div>
+
+  <div>
+  {% for s in sections %}
+  <div class="card" id="s-{{ s.name }}">
+    <div class="spread">
+      <h2 style="margin:0" class="mono">[{{ s.name }}]</h2>
+      {% if s.is_map %}
+      <span class="row">
+        <input type="search" placeholder="filtrar {{ s.n }} entradas…"
+               oninput="filterTable(this, '{{ s.name }}')" style="width:16em">
+        <button class="tiny" onclick="addRow('{{ s.name }}')">+ fila</button>
+      </span>
+      {% endif %}
+    </div>
+    {% if s.help %}<p class="muted small" style="margin:.1rem 0 .7rem">{{ s.help }}</p>{% endif %}
+
+    {% if s.is_map %}
+      <table data-map="{{ s.name }}">
+        <tr><th style="width:38%">clave</th><th>valor</th><th class="num" style="width:5em"></th></tr>
+        {% for e in s.entries %}
+        <tr data-key="{{ e.key }}" class="{{ 'pendiente' if not e.active }}">
+          <td class="mono trunc">{{ e.key }}
+            {% if not e.active %}<span class="pill warn" title="comentada en el fichero">sin decidir</span>{% endif %}
+            {% if e.comment %}<div class="muted small">{{ e.comment }}</div>{% endif %}</td>
+          <td><input type="text" class="mono" style="width:100%"
+                     value="{{ e.value|tojson if e.value is not string else e.value }}"
+                     data-sec="{{ s.name }}" data-key="{{ e.key }}"
+                     data-json="{{ '1' if e.value is not string }}"
+                     oninput="mark(this)"></td>
+          <td class="num"><button class="tiny" onclick="dropRow(this, '{{ s.name }}', '{{ e.key }}')">×</button></td>
+        </tr>
+        {% endfor %}
+      </table>
+
+    {% else %}
+      {% for e in s.entries %}
+        <div class="field">
+          <label for="f-{{ s.name }}-{{ e.key }}" class="mono">{{ e.key }}</label>
+          {% if e.type == 'bool' %}
+            <label class="check"><input type="checkbox" id="f-{{ s.name }}-{{ e.key }}"
+              data-sec="{{ s.name }}" data-key="{{ e.key }}" data-kind="bool"
+              {{ 'checked' if e.value }} onchange="mark(this)"> <span>{{ e.comment or 'activado' }}</span></label>
+          {% elif e.type == 'enum' %}
+            <select id="f-{{ s.name }}-{{ e.key }}" data-sec="{{ s.name }}" data-key="{{ e.key }}"
+                    data-kind="str" onchange="mark(this)">
+              {% for o in e.options %}<option {{ 'selected' if o == e.value }}>{{ o }}</option>{% endfor %}
+            </select>
+            {% if e.comment %}<div class="help">{{ e.comment }}</div>{% endif %}
+          {% elif e.type in ('int', 'float') %}
+            <input type="number" id="f-{{ s.name }}-{{ e.key }}" value="{{ e.value }}"
+                   step="{{ '0.05' if e.type == 'float' else '1' }}" style="width:8em"
+                   data-sec="{{ s.name }}" data-key="{{ e.key }}" data-kind="{{ e.type }}"
+                   oninput="mark(this)">
+            {% if e.comment %}<div class="help">{{ e.comment }}</div>{% endif %}
+          {% elif e.type == 'list' %}
+            <div class="chips" data-list="{{ s.name }}::{{ e.key }}">
+              {% for v in e.value %}
+                <span class="chip" data-v="{{ v }}"><span class="mono">{{ v }}</span>
+                  <button title="quitar" onclick="dropChip(this)">×</button></span>
+              {% endfor %}
+            </div>
+            <div class="row small" style="margin-top:5px">
+              <input type="text" placeholder="añadir…" style="width:18em"
+                     onkeydown="if(event.key==='Enter'){addChip(this,'{{ s.name }}','{{ e.key }}');event.preventDefault();}">
+              <button class="tiny" onclick="addChip(this.previousElementSibling,'{{ s.name }}','{{ e.key }}')">+</button>
+              <span class="muted">{{ e.value|length }} valores</span>
+              {% if e.key == 'keep_together' %}
+                <button class="tiny" onclick="dropLongChips('{{ s.name }}','{{ e.key }}')"
+                  title="Créditos de iTunes del tipo 'Main Artist, Orchestra - …'">
+                  quitar los créditos largos de iTunes</button>
+              {% endif %}
+            </div>
+            {% if e.comment %}<div class="help">{{ e.comment }}</div>{% endif %}
+          {% else %}
+            <input type="text" id="f-{{ s.name }}-{{ e.key }}" value="{{ e.value }}"
+                   style="width:100%;max-width:34em" data-sec="{{ s.name }}"
+                   data-key="{{ e.key }}" data-kind="str" oninput="mark(this)">
+            {% if e.comment %}<div class="help">{{ e.comment }}</div>{% endif %}
+          {% endif %}
+        </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+  {% endfor %}
+  </div>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0">Volver a proponer con este esquema</h3>
+  <p class="muted small">Después de guardar, el paso 3 es el que convierte el esquema
+    en cambios concretos.</p>
+  {{ step_form(steps[2], undo_logs) }}
+</div>
+
+<script>
+/* Pending edits live here until Guardar; the server rewrites only these lines. */
+const edits = { set: {}, remove: [] };
+
+function note(sec, key, value) {
+  (edits.set[sec] = edits.set[sec] || {})[key] = value;
+  refresh();
+}
+function refresh() {
+  const n = Object.values(edits.set).reduce((a, o) => a + Object.keys(o).length, 0)
+          + edits.remove.length;
+  document.getElementById('pending').textContent =
+    n ? `${n} cambio${n > 1 ? 's' : ''} sin guardar` : 'Sin cambios';
+  document.getElementById('save').disabled = !n;
+  document.getElementById('preview').disabled = !n;
+}
+
+function mark(input) {
+  const sec = input.dataset.sec, key = input.dataset.key;
+  let value;
+  if (input.dataset.kind === 'bool') value = input.checked;
+  else if (input.dataset.kind === 'int') value = parseInt(input.value || '0', 10);
+  else if (input.dataset.kind === 'float') value = parseFloat(input.value || '0');
+  else if (input.dataset.json === '1') {
+    try { value = JSON.parse(input.value); }
+    catch (err) { input.style.outline = '2px solid var(--bad)'; return; }
+  } else value = input.value;
+  input.style.outline = '';
+  note(sec, key, value);
+}
+
+function chipValues(sec, key) {
+  const box = document.querySelector(`[data-list="${sec}::${key}"]`);
+  return [...box.querySelectorAll('.chip')].map((c) => c.dataset.v);
+}
+function syncChips(sec, key) { note(sec, key, chipValues(sec, key)); }
+function dropChip(btn) {
+  const chip = btn.closest('.chip');
+  const [sec, key] = chip.parentElement.dataset.list.split('::');
+  chip.remove(); syncChips(sec, key);
+}
+function addChip(input, sec, key) {
+  const v = input.value.trim();
+  if (!v) return;
+  const box = document.querySelector(`[data-list="${sec}::${key}"]`);
+  box.append(el('span', { class: 'chip', 'data-v': v }, [
+    el('span', { class: 'mono', text: v }),
+    el('button', { title: 'quitar', text: '×', onclick: (e) => dropChip(e.target) }),
+  ]));
+  input.value = ''; syncChips(sec, key);
+}
+/* iTunes role soup: long credits full of 'Main Artist', 'Associated Performer'… */
+function dropLongChips(sec, key) {
+  const junk = /associated performer|main artist|featured artist|orchestra, orchestra/i;
+  let n = 0;
+  document.querySelectorAll(`[data-list="${sec}::${key}"] .chip`).forEach((c) => {
+    if (c.dataset.v.length > 60 && junk.test(c.dataset.v)) { c.remove(); n += 1; }
+  });
+  syncChips(sec, key);
+  toast(`${n} entradas de iTunes quitadas. Revisa y guarda.`, n ? 'ok' : 'warn');
+}
+
+function filterTable(input, section) {
+  const q = input.value.trim().toLowerCase();
+  document.querySelectorAll(`[data-map="${section}"] tr[data-key]`).forEach((tr) => {
+    tr.hidden = q && !tr.textContent.toLowerCase().includes(q);
+  });
+}
+function dropRow(btn, sec, key) {
+  edits.remove.push([sec, key]);
+  btn.closest('tr').style.opacity = .35;
+  btn.disabled = true;
+  refresh();
+}
+function addRow(sec) {
+  const key = prompt(`Nueva clave en [${sec}]`);
+  if (!key) return;
+  const table = document.querySelector(`[data-map="${sec}"]`);
+  const isList = sec === 'genre_map';
+  const input = el('input', {
+    type: 'text', class: 'mono', style: 'width:100%',
+    value: isList ? '["Classical"]' : '', 'data-sec': sec, 'data-key': key,
+    'data-json': isList ? '1' : null, oninput: (e) => mark(e.target),
+  });
+  table.append(el('tr', { 'data-key': key }, [
+    el('td', { class: 'mono trunc', text: key }), el('td', {}, [input]), el('td', {}),
+  ]));
+  input.focus(); mark(input);
+}
+
+document.getElementById('preview')?.addEventListener('click', async () => {
+  const d = await api.post('/schema/save', { ...edits, preview: true });
+  const box = document.getElementById('diffbox');
+  box.hidden = false;
+  document.getElementById('diff').innerHTML = (d.diff || '(sin diferencias)')
+    .split('\n').map((l) => {
+      const safe = l.replace(/[<&]/g, (c) => (c === '<' ? '&lt;' : '&amp;'));
+      if (l.startsWith('+') && !l.startsWith('+++')) return `<span class="add">${safe}</span>`;
+      if (l.startsWith('-') && !l.startsWith('---')) return `<span class="del">${safe}</span>`;
+      return safe;
+    }).join('\n');
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+});
+
+document.getElementById('save')?.addEventListener('click', async (e) => {
+  e.target.disabled = true;
+  const d = await api.post('/schema/save', edits);
+  if (d.ok) { toast(`Guardadas ${d.touched} líneas en schema.toml.`); setTimeout(() => location.reload(), 800); }
+  else { toast(d.error, 'bad'); e.target.disabled = false; }
+});
+</script>
+{% endif %}
+{% endblock %}

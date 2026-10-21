@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% from "_step.html" import step_form %}
+{% block title %}Informe · musictags{% endblock %}
+{% block body %}
+
+<div class="spread">
+  <h1>Informe del análisis</h1>
+  <span class="muted small">{% if info.exists %}report.md · {{ info.size_h }} · {{ info.age }}
+    {% else %}no hay report.md{% endif %}</span>
+</div>
+
+{% if not info.exists %}
+<div class="card">
+  <div class="note warn">Ejecuta el paso 2 para generar el informe.</div>
+  {{ step_form(steps[1], undo_logs) }}
+</div>
+{% else %}
+<p class="lede">Lo que <span class="mono">analyze_tags.py</span> ha encontrado en tus
+tags. Es la lectura previa a tocar el esquema: géneros sin mapear, nombres escritos de
+varias maneras, posibles erratas y los intérpretes detectados para los nombres de
+álbumes clásicos.</p>
+
+<div class="layout">
+  <div class="sidenav">
+    {% for t in toc if t.level <= 2 %}
+      <a href="#{{ t.id }}">{{ t.name }}</a>
+    {% endfor %}
+    <a href="{{ url_for('schema_page') }}" style="margin-top:.6rem;color:var(--accent)">
+      → editar el esquema</a>
+  </div>
+  <div class="card prose">{{ html|safe }}</div>
+</div>
+{% endif %}
+{% endblock %}

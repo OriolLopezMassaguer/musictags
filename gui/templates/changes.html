@@ -1,0 +1,259 @@
+{% extends "base.html" %}
+{% from "_step.html" import step_form %}
+{% block title %}Cambios · musictags{% endblock %}
+{% block body %}
+
+<div class="spread">
+  <h1>Cambios propuestos</h1>
+  <span class="muted small">{% if info.exists %}changes.csv · {{ info.size_h }} · {{ info.age }}
+    {% else %}no hay changes.csv{% endif %}</span>
+</div>
+<p class="lede">Lo que el paso 3 propone, agrupado por álbum. Las casillas escriben la
+columna <span class="mono">approve</span> del propio <span class="mono">changes.csv</span>,
+así que después puedes aplicar desde aquí o desde el terminal con
+<span class="mono">./4_apply.sh --apply</span>.</p>
+
+{% if not info.exists %}
+<div class="card">
+  <div class="note warn">Ejecuta primero el paso 3.</div>
+  {{ step_form(steps[2], undo_logs) }}
+</div>
+{% else %}
+
+<div class="toolbar">
+  <div class="row">
+    <select id="f-view">
+      <option value="albums">Por álbum</option>
+      <option value="rows">Lista de filas</option>
+    </select>
+    <select id="f-confidence"><option value="">confianza: todas</option></select>
+    <select id="f-field"><option value="">campo: todos</option></select>
+    <select id="f-rule"><option value="">regla: todas</option></select>
+    <input type="search" id="f-q" placeholder="buscar en ruta, antes, después…" style="width:17em">
+    <label class="check"><input type="checkbox" id="f-pending"> solo sin aprobar</label>
+    <span class="right"></span>
+    <span id="counts" class="small muted"></span>
+  </div>
+  <div class="row" style="margin-top:7px">
+    <button class="tiny" onclick="bulk('filter', true)">Aprobar todo lo filtrado</button>
+    <button class="tiny" onclick="bulk('filter', false)">Quitar aprobación</button>
+    <span class="right"></span>
+    <span id="dirty" class="small"></span>
+    <button class="primary" id="save" disabled>Guardar en changes.csv</button>
+  </div>
+</div>
+
+<div id="list"></div>
+<div class="row" id="pager" style="justify-content:center;margin:14px 0"></div>
+
+<div class="card">
+  <h3 style="margin-top:0">Aplicar</h3>
+  <p class="muted small">Guarda primero. «Simular» no toca ningún fichero; «Aplicar de
+    verdad» escribe los tags y deja un <span class="mono">undo_*.jsonl</span> antes de
+    tocar nada.</p>
+  {{ step_form(steps[3], undo_logs) }}
+</div>
+{% endif %}
+
+<script>
+const state = { view: 'albums', page: 1, size: 25, total: 0, dirty: false };
+const F = ['confidence', 'field', 'rule', 'q', 'pending'];
+
+function filters() {
+  const out = {};
+  for (const k of F) {
+    const n = document.getElementById('f-' + k);
+    out[k] = n.type === 'checkbox' ? (n.checked ? '1' : '') : n.value;
+  }
+  return out;
+}
+function query(extra = {}) {
+  return new URLSearchParams({ view: state.view, page: state.page, size: state.size,
+                               ...filters(), ...extra }).toString();
+}
+
+function fillFacets(facets) {
+  for (const [key, counts] of Object.entries(facets)) {
+    const sel = document.getElementById('f-' + key);
+    if (!sel || sel.dataset.filled) continue;
+    for (const [v, n] of Object.entries(counts)) {
+      sel.append(el('option', { value: v, text: `${v} (${n})` }));
+    }
+    sel.dataset.filled = '1';
+  }
+}
+
+async function load() {
+  const d = await api.get('/api/changes?' + query());
+  const list = document.getElementById('list');
+  if (!d.ok) { list.innerHTML = `<div class="note warn">${d.error}</div>`; return; }
+  fillFacets(d.facets);
+  state.total = d.total;
+  state.dirty = d.dirty;
+  document.getElementById('counts').textContent =
+    `${d.counts.matching.toLocaleString('es')} filas coinciden · `
+    + `${d.counts.approved.toLocaleString('es')} aprobadas de ${d.counts.total.toLocaleString('es')}`;
+  markDirty(d.dirty);
+  list.replaceChildren(...(state.view === 'albums'
+    ? d.albums.map(albumCard) : [rowTable(d.rows)]));
+  pager();
+}
+
+function markDirty(on) {
+  state.dirty = on;
+  document.getElementById('dirty').textContent = on ? 'cambios sin guardar' : '';
+  document.getElementById('save').disabled = !on;
+}
+
+function confPills(conf) {
+  return ['high', 'medium', 'low'].filter((c) => conf[c])
+    .map((c) => el('span', { class: 'pill ' + c, text: `${c} ${conf[c]}` }));
+}
+
+function albumCard(a) {
+  const head = el('div', { class: 'spread' }, [
+    el('div', {}, [
+      el('b', { class: 'trunc', text: a.display }),
+      el('div', { class: 'muted small mono trunc', text: a.rel }),
+    ]),
+    el('div', { class: 'row small' }, [
+      ...confPills(a.confidence),
+      el('span', { class: 'muted', text: `${a.tracks} pistas · ${a.changes} cambios` }),
+    ]),
+  ]);
+
+  const rename = [];
+  if (a.new_album) {
+    rename.push(el('div', { class: 'small', style: 'margin:.45rem 0' }, [
+      el('span', { class: 'old trunc', text: a.display }),
+      el('span', { class: 'arrow', text: '→' }),
+      el('b', { class: 'new trunc', text: a.new_album }),
+    ]));
+  }
+  if (a.new_albumartist) {
+    rename.push(el('div', { class: 'muted small', text: 'artista del álbum → ' + a.new_albumartist }));
+  }
+
+  const body = el('div', { hidden: true });
+  const toggle = el('button', {
+    class: 'tiny',
+    text: `ver ${a.matching} cambios`,
+    onclick: async (e) => {
+      if (!body.hidden) { body.hidden = true; e.target.textContent = `ver ${a.matching} cambios`; return; }
+      if (!body.dataset.loaded) {
+        const d = await api.get('/api/changes/album?' + query({ key: a.key }));
+        body.replaceChildren(rowTable(d.rows, true));
+        body.dataset.loaded = '1';
+      }
+      body.hidden = false; e.target.textContent = 'ocultar';
+    },
+  });
+
+  return el('div', { class: 'card' }, [
+    head, ...rename,
+    el('div', { class: 'row', style: 'margin-top:.4rem' }, [
+      toggle,
+      el('button', { class: 'tiny', text: 'aprobar el álbum',
+                     onclick: () => bulk('album', true, a.key) }),
+      el('button', { class: 'tiny', text: 'rechazar',
+                     onclick: () => bulk('album', false, a.key) }),
+      el('span', { class: 'right' }),
+      el('span', { class: 'muted small', text: `${a.approved}/${a.changes} aprobados` }),
+    ]),
+    body,
+  ]);
+}
+
+function rowTable(rows, inAlbum = false) {
+  const table = el('table');
+  table.append(el('tr', {}, [
+    el('th', { style: 'width:2.2em' }), el('th', { style: 'width:9em', text: 'campo' }),
+    el('th', { text: 'antes' }), el('th', { text: 'después' }),
+    el('th', { style: 'width:6em', text: 'conf.' }),
+    inAlbum ? null : el('th', { style: 'width:22%', text: 'fichero' }),
+  ].filter(Boolean)));
+
+  let lastFile = null;
+  for (const r of rows) {
+    if (inAlbum && r.file !== lastFile) {
+      lastFile = r.file;
+      table.append(el('tr', {}, [el('td', { colspan: 5, class: 'muted small mono trunc',
+        style: 'padding-top:9px;border-bottom:0', text: r.file })]));
+    }
+    const box = el('input', {
+      type: 'checkbox', checked: r.approved,
+      onchange: (e) => bulk('rows', e.target.checked, null, [r.i]),
+    });
+    const after = el('input', {
+      type: 'text', class: 'mono', style: 'width:100%',
+      value: r.new.join(' || '),
+      onchange: async (e) => {
+        await api.post('/api/changes/value', { row: r.i, value: e.target.value });
+        markDirty(true);
+      },
+    });
+    table.append(el('tr', {}, [
+      el('td', {}, [box]),
+      el('td', { class: 'mono', text: r.field }),
+      el('td', { class: 'old trunc', text: r.old.join(' · ') || '—' }),
+      el('td', {}, [after]),
+      el('td', {}, [el('span', { class: 'pill ' + r.confidence, text: r.confidence,
+                                 title: r.rule })]),
+      inAlbum ? null : el('td', { class: 'muted small trunc', text: r.file }),
+    ].filter(Boolean)));
+  }
+  return table;
+}
+
+async function bulk(scope, value, key, rows) {
+  const body = { scope, value, filters: filters() };
+  if (key) body.key = key;
+  if (rows) body.rows = rows;
+  const d = await api.post('/api/changes/approve', body);
+  if (!d.ok) { toast('No se ha podido cambiar.', 'bad'); return; }
+  markDirty(true);
+  if (scope !== 'rows') load(); else document.getElementById('counts').textContent =
+    `${d.counts.matching.toLocaleString('es')} filas coinciden · `
+    + `${d.counts.approved.toLocaleString('es')} aprobadas de ${d.counts.total.toLocaleString('es')}`;
+}
+
+function pager() {
+  const pages = Math.ceil(state.total / state.size) || 1;
+  const box = document.getElementById('pager');
+  box.replaceChildren(
+    el('button', { class: 'tiny', text: '‹ anterior', disabled: state.page <= 1,
+                   onclick: () => { state.page -= 1; load(); } }),
+    el('span', { class: 'muted small',
+                 text: ` ${state.page} / ${pages} · ${state.total.toLocaleString('es')} ${state.view === 'albums' ? 'álbumes' : 'filas'} ` }),
+    el('button', { class: 'tiny', text: 'siguiente ›', disabled: state.page >= pages,
+                   onclick: () => { state.page += 1; load(); } }),
+  );
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (!document.getElementById('list')) return;
+  for (const k of F) {
+    const n = document.getElementById('f-' + k);
+    n.addEventListener(n.tagName === 'INPUT' && n.type === 'search' ? 'input' : 'change',
+      debounce(() => { state.page = 1; load(); }, 250));
+  }
+  document.getElementById('f-view').addEventListener('change', (e) => {
+    state.view = e.target.value; state.page = 1;
+    state.size = state.view === 'albums' ? 25 : 100;
+    load();
+  });
+  document.getElementById('save').addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    const d = await api.post('/api/changes/save');
+    if (d.ok) { toast('Guardado en changes.csv.'); markDirty(false); }
+    else { toast('No se ha podido guardar.', 'bad'); e.target.disabled = false; }
+  });
+  load();
+});
+
+function debounce(fn, ms) {
+  let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+}
+window.onJobDone = () => load();
+</script>
+{% endblock %}
