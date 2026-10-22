@@ -16,7 +16,7 @@ from gui.runner import ROOT
 from gui.schema_edit import SchemaFile
 
 # Sections whose keys are data (one row per genre/orchestra/name), not options.
-MAP_SECTIONS = {"genre_map", "orchestra_abbrev", "aliases", "sort_overrides"}
+MAP_SECTIONS = {"genre_map", "classical_rules", "orchestra_abbrev", "aliases", "sort_overrides"}
 LIVE = "schema.toml"
 PROPOSED = "schema.proposed.toml"
 

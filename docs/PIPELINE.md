@@ -78,10 +78,19 @@ anything else.
 | `--out` | `schema.proposed.toml` | a schema built from *your* tags |
 | `--fuzzy` | off (on in the wrapper) | find near-duplicate names (ratio ≥ 0.9, keys ≥ 6 chars) |
 | `--min-band` | `2` | an `A & B` credit whose parts never appear alone is kept together if it is used on at least this many tracks |
+| `--classical-root` | most common | name of the root of the classical genre tree (`Clásica`, `Música Clásica`…). By default the commonest first segment of your `X\Y\Z` genres, else `Clásica` |
 
 `report.md` sections: field usage, albums, separators found inside single values, names
 spelled several ways, possible typos, composers, genres, performers, ambiguous
-multi-artist credits.
+multi-artist credits, and the **Classical genre tree**: the `Clásica\…` genres found in your
+files (albums, tracks) set against the built-in standard tree — same node, same up to
+accents/case, extends the standard, not in the standard — and the standard nodes you lack.
+
+Those path genres are kept out of `[genre_map]`. `schema.proposed.toml` gets two sections
+instead, `[classical_genres]` (options) and `[classical_rules]` (your nodes first, in your
+spelling and with the standard rules where they match; then yours with no rules yet, `[]`; then
+the standard nodes you lack, marked `# 0 tracks (standard)`). See *Classical genre tree* in
+[SCHEMA.md](../SCHEMA.md).
 
 **The thing to know:** `schema.proposed.toml` is rewritten *wholesale* every run. There
 is no merge logic. Copying it over `schema.toml` throws away every decision you made by
@@ -105,11 +114,24 @@ should change.
 | `--only` | all | comma-separated fields, e.g. `genre,style` |
 | `--path` | all | only files under this folder |
 
-Three phases, in order: per-track proposals, then album-wide ones (album artist,
-compilation flag), then classical album names. Each later phase sees the earlier
-phases' proposals, so an album name is built from already-canonicalised composers.
+Four phases, in order: per-track proposals, then album-wide ones (album artist,
+compilation flag), then classical album names, then the classical genre path. Each later
+phase sees the earlier phases' proposals, so an album name is built from already-canonicalised
+composers.
 
-Stdout prints the totals, the split by confidence, and a count per rule family.
+The per-track phase leaves every classical track with `GENRE = Classical` (a genre of yours that
+is a path in the tree, a bare `Clásica`, or a path the tree does not know all collapse to it, and
+none is demoted to `STYLE`). The last phase then groups the tracks by album (CD1/CD2 folders
+merged), lets each distinct work vote for a node of `[classical_rules]`, and replaces `Classical`
+by the winning path in every track of the album. It reads `WORK`, `TITLE`, `COMPOSER` and the
+period, not the genre it is about to write, so a second run over an applied library proposes
+nothing. Rows carry the rule `genre-tree: <path> (n of m works)` and are never `high`.
+`--only genre` runs just this (plus the genre mapping).
+
+Stdout prints the totals, the split by confidence, and a count per rule family
+(`genre-tree` among them). It also notes when `[classical_genres]` is missing, disabled or has
+no rules, and warns about each problem found in `[classical_rules]` (duplicate nodes, `/ ; , |`
+inside a node name, unknown concepts).
 
 ## Step 4 — apply
 

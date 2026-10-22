@@ -40,6 +40,10 @@ SECTION_HELP = {
     "composers": "Partido, nombre canónico y deducción de compositores.",
     "genres": "GENRE es la lista cerrada; STYLE recoge el detalle.",
     "genre_map": "Cada género en bruto de tu biblioteca → [GENRE, STYLE]. Vacío = borrarlo.",
+    "classical_genres": "GENRE de lo clásico como ruta (Clásica\\Orquestal\\Sinfonias), una por álbum: "
+                        "umbrales de la votación y qué hacer con lo que ya tienes.",
+    "classical_rules": "Árbol de géneros clásicos: cada ruta completa → reglas (forma+instrumento, "
+                       "period:…, composer:…). Lista vacía = nodo que solo recibe álbumes por votación.",
     "album": "Nombres de álbum clásicos: compositor - obras (solista | ORQ / director).",
     "orchestra_abbrev": "Código de 4 letras con el que sale cada orquesta en el nombre.",
     "aliases": "Cualquier grafía → nombre canónico (artistas, compositores, directores).",

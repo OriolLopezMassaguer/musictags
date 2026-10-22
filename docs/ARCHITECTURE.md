@@ -8,6 +8,7 @@
 |---|---|---|
 | `core.py` | ~475 | The canonical field set and its per-format mapping; `read_tags`/`write_tags` over mutagen; name, genre and sort normalisation; ~190 built-in classical composers with periods and spelling variants; the genre keyword taxonomy. |
 | `rules.py` | ~102 | `CreditSplitter` (split `A & B feat. C`, honouring names that must stay whole), `Canon` (alias lookup), the default separator / feat / keep-together constants. |
+| `classical_genres.py` | ~515 | The classical genre tree, with no dependencies (`re`, `unicodedata`, `collections`): path keys, the work extractor (`extract_concepts`), `Tree` (rules, per-album vote, guards on the path a track already has), the built-in `STANDARD_TREE`, and `compare()` for the analyzer's your-tree-vs-standard report. |
 | `album_names.py` | ~313 | Classical album naming: performer role classification (ensemble / conductor / soloist), 4-letter orchestra codes, work summarising and grouping, `build_name`. |
 
 ### Steps
@@ -27,16 +28,27 @@
 | `gui/schema_merge.py` | ~180 | Diffing and merging `schema.proposed.toml` into `schema.toml`. |
 | `gui/changes.py` | ~270 | `changes.csv` in memory: grouping, facets, filters, saving. |
 | `gui/runner.py` | ~295 | The step declarations, argv building with validation, and subprocess running with a live log. |
-| `gui/state.py` | ~190 | Dashboard data: pipeline freshness, library stats, schema health. |
+| `gui/state.py` | ~205 | Dashboard data: pipeline freshness, library stats, schema health (including the classical tree's problems). |
 | `gui/app.py` | ~420 | Flask routes. Thin — the logic is in the modules above. |
 
-The GUI **imports** `core`, `propose_changes.album_key` and `analyze_tags.split_genres`
-rather than reimplementing them, so its grouping and its "looks classical" test are the
-same ones the pipeline uses. It never modifies a pipeline module.
+The GUI **imports** `core`, `propose_changes.album_key`, `analyze_tags.split_genres` and
+`classical_genres.Tree` rather than reimplementing them, so its grouping, its "looks classical"
+test and its schema-health warnings are the same ones the pipeline uses. It never modifies a
+pipeline module.
+
+### Tests
+
+| | |
+|---|---|
+| `tests/` | Pipeline-side: `test_classical_genres.py` (pure), `test_propose_classical.py` (proposer and `main()` on made-up albums, including a "apply everything, propose again, expect nothing" idempotence check), `test_analyze_classical.py` (analyzer on a temporary sqlite). `mutagen_stub.py` stands in for mutagen when it is not installed; no test touches a music file. |
+| `gui/tests/` | Schema editor, merge, `changes.csv`, and the schema page through Flask's test client. |
+
+`python3 -m unittest discover tests -t .` and `python3 -m unittest discover gui/tests -t .`
+from the project root. The TOML-reading tests use `tomllib` or fall back to `tomli`.
 
 ---
 
-## Three decisions worth knowing
+## Four decisions worth knowing
 
 ### The TOML editor is a line model, not an AST
 
@@ -77,6 +89,30 @@ rather than a lookalike. Resolve the album title **per file** before grouping, n
 row: only the `album` rows carry the old name, so a per-row fallback scatters one
 file's rows across different groups.
 
+### The classical genre is a vote per album, in two stages
+
+Players that browse by `GENRE` alone need the tree *in* `GENRE`, as one backslash path
+(`Clásica\Orquestal\Sinfonias`). A track cannot decide its own node: a disc of Beethoven
+symphonies has an overture and a piano concerto filler on it, and splitting those across
+`Orquestal`, `Conciertos` and `Cámara` makes the album vanish from every list. So the proposal
+is built in two stages:
+
+1. `Proposer.track()` stays per-track and only collapses anything classical — a bare
+   `Classical`, a genre of yours that is a path of the tree, a path it does not know — to
+   `"Classical"`. That keeps the old pipeline's output unchanged when the tree is off, and
+   stops the user's own `Clásica\…` genre from being demoted to `STYLE`.
+2. `Proposer.classical_genres()` runs after `album_names()`, groups with the same `album_key()`,
+   and swaps `"Classical"` for the voted path (`classical_genres.swap_classical`). Every distinct
+   work votes once; the tree decides the node and the lowest common ancestor (`Varios`/`Otros`)
+   takes mixed albums.
+
+Two properties follow from that and are the reason for the shape. **Idempotence**: the vote reads
+`WORK`/`TITLE`/`COMPOSER`/period, never the genre being written, so a tagged library proposes
+nothing; the tests apply every proposal and propose again. **The user's own path outranks the
+rules only when it agrees**: the album's commonest existing path is compared with the voted one
+(`Tree.resolve`) and a conflict is a `low` row carrying `was <yours>`, never a silent overwrite.
+`analyze_tags.py` builds the tree seed from your files but still never reads `schema.toml`.
+
 ---
 
 ## Invariants
@@ -96,6 +132,11 @@ Anything added here has to keep these true.
 6. **Undo first.** The undo entry is flushed before the file it describes is touched.
 7. **Nothing is overwritten without a `.bak`**, and a schema that would not re-parse is
    not written at all.
+8. **Without `[classical_genres]` the proposal is exactly the old one.** The classical genre
+   tree is opt-in through the schema, like `[album]`.
+9. **Tree keys keep their backslashes.** A node is one key with single `\` in memory and doubled
+   `\\` in the file; nothing may splice a key into inline JavaScript (`dropRow` once did) or run
+   it through `core.genre_key()`, which turns `\` into a space. Use `classical_genres.path_key`.
 
 ## Adding things
 
@@ -113,6 +154,7 @@ the log drawer and the step forms come from the base template and `_step.html`.
 ## Environment
 
 Python 3.10 on the NAS, so `tomllib` does not exist and `tomli` is used instead
-(`core.py` falls back automatically). `tkinter` is not available, which is part of why
+(`core.py` and the tests fall back automatically; `classical_genres.py` uses
+`from __future__ import annotations` and nothing newer than 3.9). `tkinter` is not available, which is part of why
 the GUI is a web app. Runtime dependencies: `mutagen` and `tomli` for the pipeline,
 plus `flask` and `markdown` for the GUI only.

@@ -40,6 +40,15 @@ _CACHE = {}
 ID, APPROVE, CONF, RULE, PATH, FIELD, OLD, NEW = range(8)
 
 
+# rule family of the classical GENRE path (propose_changes.Proposer.classical_genres)
+TREE_RULE = "genre-tree"
+
+
+def _genre_text(raw):
+    """'Clásica\\Orquestal\\Sinfonias || Folk' -> 'Clásica\\Orquestal\\Sinfonias, Folk'."""
+    return raw.replace(LIST_SEP, ", ") if raw else raw
+
+
 def approved(value):
     return value.strip().lower() in YES
 
@@ -64,6 +73,7 @@ class Album:
     def summary(self, rows):
         conf = {c: 0 for c in CONFIDENCES}
         fields, approved_n, new_album, new_artist = {}, 0, None, None
+        new_genre = old_genre = None
         for i in self.rows:
             row = rows[i]
             conf[row[CONF]] = conf.get(row[CONF], 0) + 1
@@ -73,12 +83,15 @@ class Album:
                 new_album = row[NEW]
             elif row[FIELD] == "albumartist" and new_artist is None:
                 new_artist = row[NEW]
+            elif row[FIELD] == "genre" and new_genre is None and rule_group(row[RULE]) == TREE_RULE:
+                new_genre, old_genre = row[NEW], row[OLD]
         return {"key": "%s\u0000%s" % self.key, "display": self.display,
                 "folder": self.folder, "rel": os.path.basename(self.folder),
                 "tracks": len(self.files), "changes": len(self.rows),
                 "approved": approved_n, "confidence": conf,
                 "fields": sorted(fields.items(), key=lambda kv: -kv[1]),
-                "new_album": new_album, "new_albumartist": new_artist}
+                "new_album": new_album, "new_albumartist": new_artist,
+                "new_genre": _genre_text(new_genre), "old_genre": _genre_text(old_genre)}
 
 
 class ChangeSet:

@@ -14,7 +14,9 @@ Wrappers: `1_scan.sh` … `5_undo.sh` for the steps, `gui.sh` / `gui-local.sh` t
 web interface, and `tunnel.ps1` to reach it from a Windows machine over SSH.
 
 Classical albums are renamed to `Composer - works (soloist | ORCH / conductor)`, e.g.
-`Beethoven - Symphonies Nos. 5 & 7 (BPhO / Herbert von Karajan)`.
+`Beethoven - Symphonies Nos. 5 & 7 (BPhO / Herbert von Karajan)`, and get a hierarchical
+`GENRE` such as `Clásica\Orquestal\Sinfonias`, so a player that browses by genre only still
+shows a tree instead of one flat `Classical` (see *Classical genre tree* in [SCHEMA.md](SCHEMA.md)).
 
 ## Documentation
 
@@ -53,7 +55,12 @@ passed straight through to the Python script.
 ```
 
 Then iterate: edit `schema.toml` → re-propose → review → apply. You can narrow the work
-down with `./3_propose.sh --only genre,style` or `--path "/music/Classical"`.
+down with `./3_propose.sh --only genre,style` or `--path "/music/Classical"` (give it whole
+albums: the classical genre is voted per album).
+
+The first time, read the **Classical genre tree** section of `report.md`: it lists the
+`Clásica\…` genres you already have next to the built-in standard tree and says where they
+differ. *Fusionar* then brings `[classical_genres]` and `[classical_rules]` into `schema.toml`.
 
 > **Do not `cp schema.proposed.toml schema.toml`.** Step 2 regenerates the proposal from
 > scratch every run, so copying it over discards every decision you made by hand —
@@ -72,7 +79,7 @@ down with `./3_propose.sh --only genre,style` or `--path "/music/Classical"`.
 | **Panel** | State of every step, whether an output is stale, library stats, and the run buttons with each script's flags as controls. |
 | **Fusionar** | Merge `schema.proposed.toml` into `schema.toml` difference by difference. Adds what is new, keeps what you changed. |
 | **Esquema** | Edit `schema.toml` as forms and searchable tables. Only the lines you change are rewritten — comments and track counts stay. |
-| **Cambios** | Review `changes.csv` grouped by album; filter, bulk-approve, edit a proposed value. Writes back only the `approve` and `new` columns, so `./4_apply.sh` still works. |
+| **Cambios** | Review `changes.csv` grouped by album; filter, bulk-approve, edit a proposed value. Writes back only the `approve` and `new` columns, so `./4_apply.sh` still works. Each album card shows the proposed album name and genre path; the `genre-tree` rule filter lists just those. |
 | **Informe** | `report.md` rendered, with a section index. |
 
 The GUI runs the same scripts as subprocesses and shows their output live; it never
@@ -95,7 +102,12 @@ to open the port at all but to tunnel, which is what these two scripts are for:
 DSM firewall, or a DSM reverse proxy — are in
 [docs/GUI.md](docs/GUI.md#giving-another-machine-access).
 
-Tests: `python3 -m unittest discover gui/tests -t .`
+Tests (from the project root; the GUI ones need `flask`, `markdown` and `tomli` installed):
+
+```
+python3 -m unittest discover tests -t .        # genre tree, proposer, analyzer (no music files touched)
+python3 -m unittest discover gui/tests -t .    # schema editor, merge, changes.csv, schema page
+```
 
 ## Reviewing changes.csv by hand
 
@@ -121,6 +133,9 @@ Columns: `id, approve, confidence, rule, path, field, old, new`. Lists use `" ||
   written before that feature has no `[album]` section at all and step 3 then skips the
   renaming **silently** — the GUI's Panel flags this; from the terminal, check with
   `grep '^\[album\]' schema.toml`.
+- Like `[album]`, the classical genre tree is opt-in through the schema: without
+  `[classical_genres]` (or with `enabled = false`) classical tracks keep `GENRE = Classical`.
+  Step 3 prints a note when the section is missing and the GUI's Panel flags it.
 - MP3s are saved as ID3v2.4 (true multi-value frames). For an old player that needs
   v2.3, set `id3_version = 3`; lists are then joined with `"; "`.
 - Back up the library, or at least a test folder, before the first big run anyway.

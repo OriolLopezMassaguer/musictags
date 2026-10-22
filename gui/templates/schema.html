@@ -56,11 +56,11 @@ recuentos de pistas se quedan como están.</p>
             {% if not e.active %}<span class="pill warn" title="comentada en el fichero">sin decidir</span>{% endif %}
             {% if e.comment %}<div class="muted small">{{ e.comment }}</div>{% endif %}</td>
           <td><input type="text" class="mono" style="width:100%"
-                     value="{{ e.value|tojson if e.value is not string else e.value }}"
+                     value="{{ e.value|tojson|forceescape if e.value is not string else e.value }}"
                      data-sec="{{ s.name }}" data-key="{{ e.key }}"
                      data-json="{{ '1' if e.value is not string }}"
                      oninput="mark(this)"></td>
-          <td class="num"><button class="tiny" onclick="dropRow(this, '{{ s.name }}', '{{ e.key }}')">×</button></td>
+          <td class="num"><button class="tiny" onclick="dropRow(this)">×</button></td>
         </tr>
         {% endfor %}
       </table>
@@ -193,21 +193,25 @@ function filterTable(input, section) {
     tr.hidden = q && !tr.textContent.toLowerCase().includes(q);
   });
 }
-function dropRow(btn, sec, key) {
-  edits.remove.push([sec, key]);
-  btn.closest('tr').style.opacity = .35;
+/* The key is read back from the row, not spliced into an inline handler: a path such
+   as Clásica\Orquestal\Sinfonias would lose its backslashes there. */
+function dropRow(btn) {
+  const tr = btn.closest('tr');
+  edits.remove.push([tr.closest('[data-map]').dataset.map, tr.dataset.key]);
+  tr.style.opacity = .35;
   btn.disabled = true;
   refresh();
 }
+const NEW_ROW = { genre_map: '["Classical"]', classical_rules: '[]' };
 function addRow(sec) {
   const key = prompt(`Nueva clave en [${sec}]`);
   if (!key) return;
   const table = document.querySelector(`[data-map="${sec}"]`);
-  const isList = sec === 'genre_map';
+  const start = NEW_ROW[sec];          // map sections whose values are lists
   const input = el('input', {
     type: 'text', class: 'mono', style: 'width:100%',
-    value: isList ? '["Classical"]' : '', 'data-sec': sec, 'data-key': key,
-    'data-json': isList ? '1' : null, oninput: (e) => mark(e.target),
+    value: start ?? '', 'data-sec': sec, 'data-key': key,
+    'data-json': start === undefined ? null : '1', oninput: (e) => mark(e.target),
   });
   table.append(el('tr', { 'data-key': key }, [
     el('td', { class: 'mono trunc', text: key }), el('td', {}, [input]), el('td', {}),

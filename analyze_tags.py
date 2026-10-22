@@ -24,6 +24,8 @@ from core import (FIELDS, TAXONOMY, composer_aliases, composer_period, dumps_tom
                   genre_key, name_key, strip_accents, suggest_genre)
 from rules import DEFAULT_FEAT, DEFAULT_KEEP, DEFAULT_SPLIT, CreditSplitter
 from album_names import OrchestraCodes, classify
+import classical_genres as cg
+from propose_changes import album_key
 
 GENRE_SPLIT = ["/", ";", ",", "|"]
 SEPARATOR_PROBES = {
@@ -49,6 +51,12 @@ def split_genres(raw):
     return [re.sub(r"^&\s*", "", p).strip() for p in out if p.strip(" &")]
 
 
+def is_classical_path(tok):
+    """'Clásica\\Orquestal\\Sinfonias': a hierarchy whose first level is the classical genre."""
+    head, sep, _ = tok.partition(cg.SEP)
+    return bool(sep) and suggest_genre(head.strip())[0] == "Classical"
+
+
 def pick_canonical(variants: Counter) -> str:
     """Most used spelling; ties -> the one with accents, then with 'The'."""
     def score(v):
@@ -63,6 +71,9 @@ def main():
     ap.add_argument("--report", default="report.md")
     ap.add_argument("--out", default="schema.proposed.toml")
     ap.add_argument("--fuzzy", action="store_true", help="find near-duplicate names (e.g. typos)")
+    ap.add_argument("--classical-root", metavar="NAME",
+                    help="first level of your classical genre tree (default: the one most of your "
+                         "classical paths start with, else 'Clásica')")
     ap.add_argument("--min-band", type=int, default=2,
                     help="a 'A & B' credit whose parts never appear alone is kept together "
                          "if it is used on at least this many tracks")
@@ -237,13 +248,22 @@ def main():
     # ---------------- genres ----------------
     raw_genres = Counter()
     token_genres = Counter()
-    for _, _, t in ok:
+    spelled = defaultdict(Counter)                       # path_key -> {spelling: tracks}
+    path_albums = defaultdict(set)                       # path_key -> {album key}
+    for fp, _, t in ok:
+        in_track = set()
         for v in t.get("genre", []):
             raw_genres[v] += 1
             for tok in split_genres(v):
                 token_genres[tok] += 1
+                if is_classical_path(tok) and cg.path_key(tok) not in in_track:
+                    in_track.add(cg.path_key(tok))
+                    spelled[cg.path_key(tok)][tok.strip()] += 1
+                    path_albums[cg.path_key(tok)].add(album_key(fp, t))
     gmap, unmapped = {}, []
     for tok, c in token_genres.most_common():
+        if is_classical_path(tok):                       # lives in [classical_rules], not here
+            continue
         g, style = suggest_genre(tok)
         k = genre_key(tok)
         if k in {genre_key(x) for x in gmap}:
@@ -264,6 +284,34 @@ def main():
         R.append(f"| {tok} | {c} | {val[0]} | {val[1] if len(val) > 1 else ''} |")
     for tok, c in unmapped:
         R.append(f"| {tok} | {c} | **?** | |")
+
+    # ---------------- classical genre tree: yours against the standard one ----------------
+    library = {pick_canonical(sp): (len(path_albums[k]), sum(sp.values())) for k, sp in spelled.items()}
+    cmp = cg.compare(library, root=args.classical_root)
+    other_spellings = {pick_canonical(sp): [x for x in sp if x != pick_canonical(sp)] for sp in spelled.values()}
+    R += ["", "## Classical genre tree", "",
+          "Classical albums get a GENRE that is a path, e.g. `" + cmp.root + "\\Orquestal\\Sinfonias`, so a player "
+          "that browses only by GENRE keeps the hierarchy. `[classical_rules]` in `schema.proposed.toml` "
+          "says which node each kind of work goes to; below, the tree your files use today against "
+          "the built-in standard one."]
+    if not library:
+        R += ["", f"No genre of the form `{cmp.root}\\...` was found in your files, so the standard tree "
+                  "is proposed as it is."]
+    else:
+        by_status = Counter(r[3] for r in cmp.rows)
+        R += ["", f"* Root: **{cmp.root}** (`--classical-root` to change it)",
+              f"* Paths in your files: {len(cmp.rows)} on {sum(r[2] for r in cmp.rows)} tracks",
+              "* " + " · ".join(f"{k}: {by_status.get(k, 0)}" for k in
+                                ("same", "accents/case", "extends", "not in standard")),
+              f"* Standard nodes you do not have yet: {len(cmp.absent)}",
+              "", "| your genre | albums | tracks | vs. standard | standard node |", "|---|---|---|---|---|"]
+        for path, albums_n, tracks_n, status, std in cmp.rows:
+            also = other_spellings.get(path)
+            R.append(f"| `{path}`{' (also: ' + ', '.join('`' + x + '`' for x in also) + ')' if also else ''} "
+                     f"| {albums_n} | {tracks_n} | {status} | {'`' + std + '`' if std else ''} |")
+        if cmp.absent:
+            R += ["", "Standard nodes not in your files (proposed with 0 tracks, marked `(standard)`):", ""]
+            R += [f"* `{x}`" for x in cmp.absent]
 
     # ---------------- performers: soloists / orchestras / conductors ----------------
     cond_tag = {name_key(x) for _, _, t in ok for x in t.get("conductor", [])}
@@ -303,6 +351,27 @@ def main():
 
     # ---------------- schema.proposed.toml ----------------
     q = dumps_toml_str
+    classical_toml = [
+        "[classical_genres]",
+        "# Classical GENRE as a path, e.g. " + q(cmp.root + cg.SEP + "Orquestal" + cg.SEP + "Sinfonias") +
+        ": one per album, by vote of its works (SCHEMA.md, 'Classical genre tree')",
+        "enabled = true",
+        'existing = "recalc"           # "recalc" | "keep"  (recalc: always recompute; keep: trust a path already in the file)',
+        'no_match = "root"             # "root" | "keep"  (root: tag the album with the root only; keep: leave GENRE alone)',
+        "majority = 0.6               # the winning node needs this share of the album's works, else Varios / Otros",
+        "min_coverage = 0.5           # and at least this share of the works must match some rule",
+        "",
+        "[classical_rules]",
+        "# node path = [rules]. Rules are concepts joined by +; the list is OR; [] = a node that only receives",
+        "# albums by vote. Concepts: forms (symphony, concerto, sonata, quartet, mass, opera, ...), instruments",
+        "# (piano, violin, cello, ...), multi, solo, period:baroque, composer:bach, kw:text. Most + terms win.",
+        "# Keys are full paths, so edit by hand with doubled backslashes.",
+        *[f"{q(path)} = [{', '.join(q(r) for r in rules)}]   # " +
+          ("0 tracks (standard)" if origin == "absent" else
+           f"{albums_n} albums · {tracks_n} tracks" + (" · yours, no rules yet" if origin == "mine" else ""))
+          for path, rules, origin, albums_n, tracks_n in cmp.seed],
+        "",
+    ]
     classical_heavy = classical_tracks > 0.15 * n
     T = [
         "# Tagging schema derived from your current tags by analyze_tags.py",
@@ -360,6 +429,7 @@ def main():
         "# --- NOT mapped: decide (uncomment and edit) ---",
         *[f"# {q(tok)} = [\"?\"]   # {c} tracks" for tok, c in unmapped],
         "",
+        *classical_toml,
         "[album]",
         "# Classical album names:  Bach - Cello Suites Nos. 1–6 (Pablo Casals)",
         "#                         Beethoven - Symphonies Nos. 5 & 7 (BPhO / Herbert von Karajan)",
@@ -395,7 +465,8 @@ def main():
     with open(args.out, "w", encoding="utf-8") as fh:
         fh.write("\n".join(T))
     print(f"Wrote {args.report} and {args.out}  ({n} tracks, {len(gmap)} genres mapped, "
-          f"{len(unmapped)} unmapped, {len(aliases)} aliases, {len(keep)} protected names)")
+          f"{len(unmapped)} unmapped, {len(aliases)} aliases, {len(keep)} protected names, "
+          f"{len(cmp.rows)} classical genre paths)")
 
 
 if __name__ == "__main__":
