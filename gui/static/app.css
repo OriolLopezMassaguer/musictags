@@ -112,6 +112,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .new { color: var(--ok); }
 .arrow { color: var(--mut); padding: 0 4px; }
 
+/* The chain card leads the step list, so it gets the accent edge. */
+.card.chain { border-left: 3px solid var(--accent); }
+
 /* ---- log drawer ---- */
 #drawer {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; background: var(--panel);

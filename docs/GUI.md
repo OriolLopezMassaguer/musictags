@@ -127,6 +127,11 @@ The state of the whole thing in one screen.
 - **Field coverage**: what share of tracks has each tag today. The fields at 0 % are
   exactly the ones the pipeline fills.
 - Every step's flags as real controls, and the buttons to run it.
+- **Todo seguido**, the card above the steps: runs 1 → 2 → 3 → 4 back to back, taking
+  each step's options from that step's own form further down the page, and stops at the
+  first step that fails. Step 4 runs as a **dry run**: the chain never writes to your
+  music files, because writing is the one action that should stay a deliberate, confirmed
+  click. `./0_all.sh` is the same chain from a terminal.
 
 ### Fusionar
 
@@ -213,9 +218,10 @@ The pages are thin; this is the actual surface. All JSON.
 |---|---|---|
 | `GET` | `/api/state` | pipeline freshness + current job |
 | `POST` | `/api/run/<step>` | `{params, write, confirm}`; `write` needs `confirm: "APLICAR"` |
+| `POST` | `/api/run-chain/<chain>` | `{params: {step_id: {…}}}` — several steps back to back; every argv is validated before the first one starts |
 | `GET` | `/api/job?id=&from=&wait=` | long-polled log tail |
 | `GET` | `/stream/<job_id>?from=` | the same as Server-Sent Events |
-| `POST` | `/api/job/stop` | terminate the running job |
+| `POST` | `/api/job/stop` | `{force}` — ask the job to stop at its next safe point (SIGTERM), or kill it (SIGKILL) |
 | `GET` | `/api/changes?view=albums\|rows&page=&size=&…filters` | paged, with facet counts |
 | `GET` | `/api/changes/album?key=` | the rows of one album |
 | `POST` | `/api/changes/approve` | `{scope: rows\|album\|filter, value, …}` |
@@ -224,8 +230,25 @@ The pages are thin; this is the actual surface. All JSON.
 | `POST` | `/schema/save` | `{set, remove, comment_out, preview}`; `preview` returns a diff instead of writing |
 | `POST` | `/merge/apply` | `{diff_id: "mine"\|"theirs"\|"union"\|"skip"}` |
 
+A job is a *list* of steps, so a single step and the whole chain are the same object:
+`/api/job` and `/stream/<id>` report `index`, `total` and `steps` alongside the step
+running now, and the log of a chain carries a `===== 2/4  analyze =====` banner between
+steps.
+
 Approvals and schema edits are held in server memory until you press *Guardar*, so an
 accidental reload loses the edits rather than half-writing them.
+
+## Stopping a run
+
+*Parar* sends SIGTERM, which the scripts turn into a tidy stop at their next safe point
+(`core.handle_interrupts`); the button then reads *Matar*, and a second press sends
+SIGKILL after a confirmation. Each job runs in its own process group, so the signal
+reaches any grandchild too.
+
+Stopping during a chain also cancels the steps that have not started — the log ends with
+`-- detenido: quedaban N paso(s) sin lanzar`. A stopped job finishes with return code 130
+and shows as *detenido*, not as an error. `docs/PIPELINE.md` has what each step
+guarantees when stopped.
 
 ## Files it writes
 
@@ -256,6 +279,10 @@ The ones that matter:
 - **Merge** — defaults, and that applying them keeps your decisions.
 - **changes.csv** — that a save touches only `approve` and `new`, and that the CD
   collapsing groups a file's rows together.
+- **Chains and stopping** (`test_runner_chain.py`) — a chain's argv are all built before
+  the first step starts; the steps run in order; a failure stops the rest; a stop lets the
+  running script choose its moment and cancels the steps not yet launched; `--force` kills
+  one that ignores SIGTERM; and `as_dict()` keeps the keys the templates read.
 - **Classical tree** (`test_classical_gui.py`) — keys with backslashes survive read, edit,
   add and remove; the merge adds new nodes and leaves your rule lists alone; the album card
   carries the proposed genre path; the schema page renders its `value` attributes and
@@ -267,7 +294,9 @@ The ones that matter:
 |---|---|
 | Page does not open from another machine | DSM firewall; see *Giving another machine access* |
 | `403 Falta el token` | started with `--token`; add `?t=…` once and a cookie keeps it |
-| `ya hay un paso en marcha` | one job at a time, by design; wait or press *Parar* |
+| `ya hay algo en marcha` | one job at a time, by design; wait or press *Parar* |
+| A run shows *detenido* with code 130 | it was stopped on request, not a failure |
+| *Parar* does not seem to do anything | the step stops at its next safe point, which for a long scan is the current file; press again to kill it |
 | Log stops mid-run | progress is on stderr and is merged in; if the page was reloaded the log is still in `gui/logs/` |
 | *Cambios* says there is no `changes.csv` | run step 3 |
 | An edit vanished | schema and approval edits live in memory until *Guardar* |

@@ -10,6 +10,10 @@ Nothing is written to your music files. changes.csv has one row per (file, field
     approve | confidence | rule | path | field | old | new
 Rows with approve = y will be applied by apply_changes.py. Edit the CSV freely
 (change 'new', blank out 'approve'), e.g. in LibreOffice/Excel. Lists use ' || '.
+
+Ctrl-C (or the GUI's "Parar") stops it; the CSV is built in a .part file and only
+renamed into place at the end, so an interrupted run leaves the previous
+changes.csv exactly as it was.
 """
 import argparse
 import csv
@@ -17,10 +21,12 @@ import json
 import os
 import re
 import sqlite3
+import sys
 from collections import Counter, defaultdict
 
-from core import (LIST_SEP, TAXONOMY, WRITABLE, band_sort, composer_aliases, composer_period,
-                  genre_key, load_config, name_key, nice_case, person_sort)
+from core import (EXIT_INTERRUPTED, LIST_SEP, TAXONOMY, WRITABLE, Interrupted, band_sort,
+                  check_stop, composer_aliases, composer_period, genre_key, handle_interrupts,
+                  load_config, name_key, nice_case, person_sort)
 from rules import DEFAULT_FEAT, DEFAULT_SPLIT, Canon, CreditSplitter, dedupe
 from album_names import (OrchestraCodes, build_name, classify, composer_text, performers_text,
                          short_work, summarize_works, work_of_title)
@@ -429,6 +435,7 @@ def main():
     ap.add_argument("--only", help="comma separated fields to propose (default: all)")
     ap.add_argument("--path", help="only files under this folder")
     args = ap.parse_args()
+    handle_interrupts()
 
     cfg = load_config(args.schema)
     auto = set(cfg.get("general", {}).get("auto_approve", ["high", "medium"]))
@@ -451,6 +458,7 @@ def main():
 
     tracks = []
     for path, tags in rows:
+        check_stop()
         t = json.loads(tags)
         p, main_artists = prop.track(t)
         tracks.append((path, t, p, main_artists))
@@ -459,21 +467,29 @@ def main():
     prop.classical_genres(tracks)
 
     stats, conf_stats, n = Counter(), Counter(), 0
-    with open(args.out, "w", newline="", encoding="utf-8-sig") as fh:
-        w = csv.writer(fh)
-        w.writerow(["id", "approve", "confidence", "rule", "path", "field", "old", "new"])
-        for path, t, p, _ in tracks:
-            for field in sorted(p):
-                if field not in WRITABLE or (only and field not in only):
-                    continue
-                new, conf, rule = p[field]
-                if new == t.get(field, []):
-                    continue
-                n += 1
-                stats[rule.split(":")[0]] += 1
-                conf_stats[conf] += 1
-                w.writerow([n, "y" if conf in auto else "", conf, rule, path, field,
-                            LIST_SEP.join(t.get(field, [])), LIST_SEP.join(new)])
+    part = args.out + ".part"
+    try:
+        with open(part, "w", newline="", encoding="utf-8-sig") as fh:
+            w = csv.writer(fh)
+            w.writerow(["id", "approve", "confidence", "rule", "path", "field", "old", "new"])
+            for path, t, p, _ in tracks:
+                check_stop()
+                for field in sorted(p):
+                    if field not in WRITABLE or (only and field not in only):
+                        continue
+                    new, conf, rule = p[field]
+                    if new == t.get(field, []):
+                        continue
+                    n += 1
+                    stats[rule.split(":")[0]] += 1
+                    conf_stats[conf] += 1
+                    w.writerow([n, "y" if conf in auto else "", conf, rule, path, field,
+                                LIST_SEP.join(t.get(field, [])), LIST_SEP.join(new)])
+    except BaseException:                    # interrupted, or anything else
+        if os.path.exists(part):             # never leave a half-written CSV behind
+            os.unlink(part)
+        raise
+    os.replace(part, args.out)               # atomic: the old CSV until this point
     files = len({path for path, _, p, _ in tracks if p})
     print(f"{n} proposed changes in {files} of {len(tracks)} files -> {args.out}")
     print("  by confidence: " + ", ".join(f"{k} {v}" for k, v in conf_stats.most_common()))
@@ -482,4 +498,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Interrupted:
+        print("\nInterrupted: changes.csv left as it was.", file=sys.stderr)
+        sys.exit(EXIT_INTERRUPTED)
