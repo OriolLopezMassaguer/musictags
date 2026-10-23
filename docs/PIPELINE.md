@@ -21,6 +21,30 @@ easy to wrap (the GUI runs these very scripts as subprocesses).
 
 Nothing touches your music until step 4 is given `--apply`.
 
+`./0_all.sh` runs steps 1-4 in order (step 4 as a dry run), stopping at the first
+failure; `--skip-scan` starts at step 2. The GUI's *Todo seguido* button is the same
+chain, built from `gui/runner.py:CHAINS`.
+
+---
+
+## Stopping a step
+
+Every step installs `core.handle_interrupts()`, so SIGINT (Ctrl-C) and SIGTERM (what the
+GUI's *Parar* sends) do **not** kill it where it stands. The handler only raises a flag;
+the long loops ask `core.check_stop()` / `core.stopping()` at a point where stopping
+costs nothing, and the step exits with code **130**. The handler then steps aside, so a
+second signal kills a wedged run for real.
+
+This matters most for step 4: a process killed inside `write_tags()` can leave a
+half-written file, and that is the one damage this toolkit cannot undo.
+
+| Step | Checks at | Guarantee when stopped |
+|---|---|---|
+| 1 scan | after each file, and while listing the tree | Everything read is committed (`finally: db.commit()`), and the pending reads are cancelled (`pool.shutdown(cancel_futures=True)` — `pool.map` queues all 11k paths up front, so without it the whole library would still be read). The stale-entry sweep and the CSV export are skipped, since both would describe a partial scan. Re-run it and it continues from there. |
+| 2 analyze | between report sections, and inside the `--fuzzy` bucket loop | Nothing at all is written: both outputs are produced in one `write()` at the very end, so `report.md` and `schema.proposed.toml` keep their previous contents. |
+| 3 propose | between tracks | The CSV is written to `changes.csv.part` and `os.replace()`d into place only on success, so an interrupted run leaves the previous `changes.csv` byte for byte. The `.part` file is removed. |
+| 4 apply | **between files only** | No file is left half-tagged. The `undo_*.jsonl` is flushed before each write, so everything written before the stop is undoable; the cache is refreshed for those files and the normal summary is printed with an `Interrupted after N of M files` line. |
+
 ---
 
 ## config.sh
@@ -78,10 +102,19 @@ anything else.
 | `--out` | `schema.proposed.toml` | a schema built from *your* tags |
 | `--fuzzy` | off (on in the wrapper) | find near-duplicate names (ratio ≥ 0.9, keys ≥ 6 chars) |
 | `--min-band` | `2` | an `A & B` credit whose parts never appear alone is kept together if it is used on at least this many tracks |
+| `--classical-root` | most common | name of the root of the classical genre tree (`Clásica`, `Música Clásica`…). By default the commonest first segment of your `X\Y\Z` genres, else `Clásica` |
 
 `report.md` sections: field usage, albums, separators found inside single values, names
 spelled several ways, possible typos, composers, genres, performers, ambiguous
-multi-artist credits.
+multi-artist credits, and the **Classical genre tree**: the `Clásica\…` genres found in your
+files (albums, tracks) set against the built-in standard tree — same node, same up to
+accents/case, extends the standard, not in the standard — and the standard nodes you lack.
+
+Those path genres are kept out of `[genre_map]`. `schema.proposed.toml` gets two sections
+instead, `[classical_genres]` (options) and `[classical_rules]` (your nodes first, in your
+spelling and with the standard rules where they match; then yours with no rules yet, `[]`; then
+the standard nodes you lack, marked `# 0 tracks (standard)`). See *Classical genre tree* in
+[SCHEMA.md](../SCHEMA.md).
 
 **The thing to know:** `schema.proposed.toml` is rewritten *wholesale* every run. There
 is no merge logic. Copying it over `schema.toml` throws away every decision you made by
@@ -105,11 +138,24 @@ should change.
 | `--only` | all | comma-separated fields, e.g. `genre,style` |
 | `--path` | all | only files under this folder |
 
-Three phases, in order: per-track proposals, then album-wide ones (album artist,
-compilation flag), then classical album names. Each later phase sees the earlier
-phases' proposals, so an album name is built from already-canonicalised composers.
+Four phases, in order: per-track proposals, then album-wide ones (album artist,
+compilation flag), then classical album names, then the classical genre path. Each later
+phase sees the earlier phases' proposals, so an album name is built from already-canonicalised
+composers.
 
-Stdout prints the totals, the split by confidence, and a count per rule family.
+The per-track phase leaves every classical track with `GENRE = Classical` (a genre of yours that
+is a path in the tree, a bare `Clásica`, or a path the tree does not know all collapse to it, and
+none is demoted to `STYLE`). The last phase then groups the tracks by album (CD1/CD2 folders
+merged), lets each distinct work vote for a node of `[classical_rules]`, and replaces `Classical`
+by the winning path in every track of the album. It reads `WORK`, `TITLE`, `COMPOSER` and the
+period, not the genre it is about to write, so a second run over an applied library proposes
+nothing. Rows carry the rule `genre-tree: <path> (n of m works)` and are never `high`.
+`--only genre` runs just this (plus the genre mapping).
+
+Stdout prints the totals, the split by confidence, and a count per rule family
+(`genre-tree` among them). It also notes when `[classical_genres]` is missing, disabled or has
+no rules, and warns about each problem found in `[classical_rules]` (duplicate nodes, `/ ; , |`
+inside a node name, unknown concepts).
 
 ## Step 4 — apply
 

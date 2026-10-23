@@ -24,7 +24,7 @@ from flask import (Flask, Response, abort, jsonify, redirect, render_template,
 
 from gui import changes as changes_mod
 from gui import schema_merge, state
-from gui.runner import (ROOT, RUNNER, STEPS, BY_ID, BadRequest, undo_logs)
+from gui.runner import (ROOT, RUNNER, STEPS, BY_ID, CHAINS, BadRequest, undo_logs)
 from gui.schema_edit import SchemaFile
 
 app = Flask(__name__)
@@ -40,6 +40,10 @@ SECTION_HELP = {
     "composers": "Partido, nombre canónico y deducción de compositores.",
     "genres": "GENRE es la lista cerrada; STYLE recoge el detalle.",
     "genre_map": "Cada género en bruto de tu biblioteca → [GENRE, STYLE]. Vacío = borrarlo.",
+    "classical_genres": "GENRE de lo clásico como ruta (Clásica\\Orquestal\\Sinfonias), una por álbum: "
+                        "umbrales de la votación y qué hacer con lo que ya tienes.",
+    "classical_rules": "Árbol de géneros clásicos: cada ruta completa → reglas (forma+instrumento, "
+                       "period:…, composer:…). Lista vacía = nodo que solo recibe álbumes por votación.",
     "album": "Nombres de álbum clásicos: compositor - obras (solista | ORQ / director).",
     "orchestra_abbrev": "Código de 4 letras con el que sale cada orquesta en el nombre.",
     "aliases": "Cualquier grafía → nombre canónico (artistas, compositores, directores).",
@@ -69,7 +73,8 @@ def keep_token(response):
 
 @app.context_processor
 def globals_():
-    return {"steps": STEPS, "busy": RUNNER.busy(), "undo_logs": undo_logs(),
+    return {"steps": STEPS, "chains": CHAINS, "busy": RUNNER.busy(),
+            "undo_logs": undo_logs(),
             "current_job": RUNNER.current.as_dict() if RUNNER.current else None}
 
 
@@ -308,6 +313,18 @@ def api_run(step_id):
     return jsonify(ok=True, job=job.as_dict())
 
 
+@app.post("/api/run-chain/<chain_id>")
+def api_run_chain(chain_id):
+    """Run several steps back to back. Each step takes its own form's values."""
+    body = request.get_json(silent=True) or {}
+    try:
+        job = RUNNER.start_chain(chain_id, body.get("params") or {})
+    except BadRequest as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    changes_mod.invalidate()                 # the chain rewrites changes.csv
+    return jsonify(ok=True, job=job.as_dict())
+
+
 @app.get("/api/job")
 def api_job():
     job = RUNNER.get(request.args.get("id", "")) or RUNNER.current
@@ -320,9 +337,14 @@ def api_job():
 
 @app.post("/api/job/stop")
 def api_job_stop():
-    if RUNNER.current:
-        RUNNER.current.stop()
-    return jsonify(ok=True)
+    """Ask the run to stop; {"force": true} kills it instead of asking."""
+    body = request.get_json(silent=True) or {}
+    job = RUNNER.current
+    if job is None or not job.running:
+        return jsonify(ok=False, error="No hay nada en marcha."), 400
+    force = bool(body.get("force"))
+    job.stop(force=force)
+    return jsonify(ok=True, forced=force, job=job.as_dict())
 
 
 @app.get("/stream/<job_id>")
@@ -330,9 +352,12 @@ def stream(job_id):
     job = RUNNER.get(job_id)
     if job is None:
         abort(404)
+    # Read the query string here: gen() runs while the response streams, long
+    # after Flask has torn down the request context.
+    start = max(0, int(request.args.get("from", 0)))
 
     def gen():
-        sent = max(0, int(request.args.get("from", 0)))
+        sent = start
         while True:
             lines, sent, running = job.follow(sent, timeout=1.0)
             for line in lines:

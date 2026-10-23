@@ -39,6 +39,24 @@ siguen haciendo exactamente lo mismo desde el terminal.</p>
 {% endif %}
 
 <h2>Pasos</h2>
+
+{% for chain in chains %}
+<div class="card chain">
+  <div class="spread">
+    <h3 style="margin:0">{{ chain.label }}</h3>
+    <span class="muted small mono">{{ chain.sh }}</span>
+  </div>
+  <p class="muted small" style="margin:.2rem 0 .4rem">{{ chain.desc }}</p>
+  <div class="note warn" style="margin:.4rem 0">{{ chain.note }}</div>
+  <div class="row" style="margin-top:10px">
+    <button class="primary" data-run-chain="{{ chain.id }}">
+      Ejecutar los {{ chain.steps|length }} pasos seguidos</button>
+    <span class="muted small">Se puede parar en cualquier momento con «Parar»: el paso
+      en marcha se detiene en su siguiente punto seguro y los que falten no se lanzan.</span>
+  </div>
+</div>
+{% endfor %}
+
 {% for step in pipeline %}
 <div class="card">
   <div class="spread">
@@ -86,4 +104,10 @@ siguen haciendo exactamente lo mismo desde el terminal.</p>
 </table>
 </div>
 {% endif %}
+
+<script>
+/* After a run the stats, the staleness pills and the file dates are all stale.
+   A reload re-attaches the drawer to the finished job, so the log is not lost. */
+window.onJobDone = (job) => { if (job) setTimeout(() => location.reload(), 1500); };
+</script>
 {% endblock %}

@@ -133,6 +133,14 @@ function albumCard(a) {
   if (a.new_albumartist) {
     rename.push(el('div', { class: 'muted small', text: 'artista del álbum → ' + a.new_albumartist }));
   }
+  if (a.new_genre) {
+    rename.push(el('div', { class: 'small', style: 'margin:.3rem 0' }, [
+      el('span', { class: 'muted', text: 'género ' }),
+      a.old_genre ? el('span', { class: 'old trunc', text: a.old_genre }) : '',
+      a.old_genre ? el('span', { class: 'arrow', text: '→' }) : '',
+      el('b', { class: 'new trunc', text: a.new_genre }),
+    ]));
+  }
 
   const body = el('div', { hidden: true });
   const toggle = el('button', {

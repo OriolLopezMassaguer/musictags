@@ -10,6 +10,10 @@ Nothing is written to your music files. changes.csv has one row per (file, field
     approve | confidence | rule | path | field | old | new
 Rows with approve = y will be applied by apply_changes.py. Edit the CSV freely
 (change 'new', blank out 'approve'), e.g. in LibreOffice/Excel. Lists use ' || '.
+
+Ctrl-C (or the GUI's "Parar") stops it; the CSV is built in a .part file and only
+renamed into place at the end, so an interrupted run leaves the previous
+changes.csv exactly as it was.
 """
 import argparse
 import csv
@@ -17,13 +21,16 @@ import json
 import os
 import re
 import sqlite3
+import sys
 from collections import Counter, defaultdict
 
-from core import (LIST_SEP, TAXONOMY, WRITABLE, band_sort, composer_aliases, composer_period,
-                  genre_key, load_config, name_key, nice_case, person_sort)
+from core import (EXIT_INTERRUPTED, LIST_SEP, TAXONOMY, WRITABLE, Interrupted, band_sort,
+                  check_stop, composer_aliases, composer_period, genre_key, handle_interrupts,
+                  load_config, name_key, nice_case, person_sort)
 from rules import DEFAULT_FEAT, DEFAULT_SPLIT, Canon, CreditSplitter, dedupe
 from album_names import (OrchestraCodes, build_name, classify, composer_text, performers_text,
-                         summarize_works, work_of_title)
+                         short_work, summarize_works, work_of_title)
+from classical_genres import Tree, extract_concepts, swap_classical, tree_status
 
 DISC_DIR = re.compile(r"^(?:cd|disc|disk|disco|disque|disc\s*\d+\s*of)\s*\d+\b.*$", re.I)
 
@@ -66,6 +73,7 @@ class Proposer:
         self.gmap = {genre_key(k): v for k, v in cfg.get("genre_map", {}).items()}
         self.tax = {genre_key(x): x for x in g.get("taxonomy", TAXONOMY)}
         self.gsep = g.get("split_separators", ["/", ";", ","])
+        self.tree = Tree.from_cfg(cfg)          # None = no hierarchical classical genre
 
     # ------------------------------------------------------------------ helpers
     def is_classical_composer(self, name):
@@ -158,7 +166,11 @@ class Proposer:
         # ---- genres ----
         genres, styles, conf, rules = [], [], "high", []
         for v in cur("genre"):
+            if self.tree and self.tree.is_prior(v):          # Clásica\Orquestal\...: classical_genres() decides
+                genres.append("Classical"); continue
             for tok in self.split_genre(v):
+                if self.tree and self.tree.is_prior(tok):
+                    genres.append("Classical"); continue
                 k = genre_key(tok)
                 if k in self.gmap:
                     m = self.gmap[k]
@@ -345,6 +357,61 @@ class Proposer:
                 if t.get("album") != [name]:
                     p["album"] = ([name], conf, rule)
 
+    # ------------------------------------------------------------------ classical genre tree
+    def classical_genres(self, tracks):
+        """Classical albums: GENRE 'Classical' -> a tree path such as Clásica\\Orquestal\\Sinfonias.
+        One path per album, by vote of its distinct works (see classical_genres.Tree)."""
+        tree = self.tree
+        if not tree:
+            return
+        groups = defaultdict(list)
+        for item in tracks:
+            groups[album_key(item[0], item[1])].append(item)
+        for items in groups.values():
+            items = sorted(items, key=lambda x: x[0])
+            classical = [it for it in items if "Classical" in eff(it[1], it[2], "genre")]
+            if not classical:
+                continue
+            works, priors, comps_all = {}, Counter(), []
+            for _, t, p, _ in classical:
+                comps = eff(t, p, "composer")
+                comps_all += [c for c in comps if c not in comps_all]
+                periods = dedupe(self.period[c] for c in comps if c in self.period)
+                title = (t.get("title") or [""])[0]
+                work = (eff(t, p, "work") or [None])[0] or work_of_title(title, comps)[0]
+                key = fold_key(short_work(work or title, keep_catalog=False))
+                works.setdefault(key, extract_concepts(work=work, title=title, composers=comps, periods=periods))
+                priors.update(tree.priors_in(t.get("genre", []), self.split_genre))
+            periods = dedupe(self.period[c] for c in comps_all if c in self.period)
+            album_text = (classical[0][1].get("album") or [""])[0]
+            fallback = extract_concepts(text=album_text, composers=comps_all, periods=periods)
+            d = tree.album_decision(works, fallback)
+            res = tree.resolve(d, priors)
+
+            for _, t, p, _ in classical:
+                genres = list(eff(t, p, "genre"))
+                if res is None:                              # leave what the file already says
+                    own = tree.priors_in(t.get("genre", []), self.split_genre)
+                    if not own:
+                        continue                             # flat 'Classical': nothing to refine
+                    new = swap_classical(genres, own[0])
+                    old = p.get("genre")
+                    if new == t.get("genre", []):
+                        p.pop("genre", None)
+                    else:
+                        p["genre"] = (new, old[1] if old else "high", old[2] if old else "genre: kept")
+                    continue
+                if d is None:
+                    how = "no rule matched, album goes to the root"
+                elif d.how == "common":
+                    how = "mixed album, %d of %d works matched" % (d.n, d.m)
+                elif d.how == "album-text":
+                    how = "from the album title"
+                else:
+                    how = "%d of %d works" % (d.n, d.m)
+                rule = "genre-tree: %s (%s%s)" % (res.path, how, "; was " + res.was if res.was else "")
+                p["genre"] = (swap_classical(genres, res.path), res.conf, rule)
+
 
 def fold_key(s):
     return name_key(s)
@@ -368,11 +435,20 @@ def main():
     ap.add_argument("--only", help="comma separated fields to propose (default: all)")
     ap.add_argument("--path", help="only files under this folder")
     args = ap.parse_args()
+    handle_interrupts()
 
     cfg = load_config(args.schema)
     auto = set(cfg.get("general", {}).get("auto_approve", ["high", "medium"]))
     only = set(args.only.split(",")) if args.only else None
     prop = Proposer(cfg)
+    status = tree_status(cfg)
+    if status != "ok":
+        print({"missing": "note: the schema has no [classical_genres] section: classical tracks keep "
+                          "GENRE = Classical (merge it from schema.proposed.toml, or see SCHEMA.md)",
+               "disabled": "note: [classical_genres] enabled = false: classical tracks keep GENRE = Classical",
+               "empty": "note: [classical_rules] is empty: classical tracks keep GENRE = Classical"}[status])
+    for problem in prop.tree.problems if prop.tree else []:
+        print("warning: " + problem)
 
     db = sqlite3.connect(args.db)
     rows = db.execute("SELECT path, tags FROM files WHERE error IS NULL ORDER BY path").fetchall()
@@ -382,28 +458,38 @@ def main():
 
     tracks = []
     for path, tags in rows:
+        check_stop()
         t = json.loads(tags)
         p, main_artists = prop.track(t)
         tracks.append((path, t, p, main_artists))
     prop.albums(tracks)
     prop.album_names(tracks)
+    prop.classical_genres(tracks)
 
     stats, conf_stats, n = Counter(), Counter(), 0
-    with open(args.out, "w", newline="", encoding="utf-8-sig") as fh:
-        w = csv.writer(fh)
-        w.writerow(["id", "approve", "confidence", "rule", "path", "field", "old", "new"])
-        for path, t, p, _ in tracks:
-            for field in sorted(p):
-                if field not in WRITABLE or (only and field not in only):
-                    continue
-                new, conf, rule = p[field]
-                if new == t.get(field, []):
-                    continue
-                n += 1
-                stats[rule.split(":")[0]] += 1
-                conf_stats[conf] += 1
-                w.writerow([n, "y" if conf in auto else "", conf, rule, path, field,
-                            LIST_SEP.join(t.get(field, [])), LIST_SEP.join(new)])
+    part = args.out + ".part"
+    try:
+        with open(part, "w", newline="", encoding="utf-8-sig") as fh:
+            w = csv.writer(fh)
+            w.writerow(["id", "approve", "confidence", "rule", "path", "field", "old", "new"])
+            for path, t, p, _ in tracks:
+                check_stop()
+                for field in sorted(p):
+                    if field not in WRITABLE or (only and field not in only):
+                        continue
+                    new, conf, rule = p[field]
+                    if new == t.get(field, []):
+                        continue
+                    n += 1
+                    stats[rule.split(":")[0]] += 1
+                    conf_stats[conf] += 1
+                    w.writerow([n, "y" if conf in auto else "", conf, rule, path, field,
+                                LIST_SEP.join(t.get(field, [])), LIST_SEP.join(new)])
+    except BaseException:                    # interrupted, or anything else
+        if os.path.exists(part):             # never leave a half-written CSV behind
+            os.unlink(part)
+        raise
+    os.replace(part, args.out)               # atomic: the old CSV until this point
     files = len({path for path, _, p, _ in tracks if p})
     print(f"{n} proposed changes in {files} of {len(tracks)} files -> {args.out}")
     print("  by confidence: " + ", ".join(f"{k} {v}" for k, v in conf_stats.most_common()))
@@ -412,4 +498,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Interrupted:
+        print("\nInterrupted: changes.csv left as it was.", file=sys.stderr)
+        sys.exit(EXIT_INTERRUPTED)

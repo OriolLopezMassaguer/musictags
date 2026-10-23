@@ -12,6 +12,7 @@ import sqlite3
 import time
 
 from analyze_tags import split_genres
+from classical_genres import Tree, tree_status
 from core import composer_aliases, name_key, suggest_genre
 from propose_changes import album_key
 from rules import CreditSplitter
@@ -157,6 +158,7 @@ def schema_health():
                                "clásicos está desactivado y proponer no te avisa.")
     elif not cfg.get("album", {}).get("enabled"):
         out["problems"].append("[album] enabled = false: no se renombrará ningún álbum.")
+    out["problems"].extend(_classical_tree_problems(cfg))
     if "orchestra_abbrev" not in out["sections"]:
         out["problems"].append("Falta [orchestra_abbrev]: las orquestas aparecerán con "
                                "su nombre largo en vez de su código de 4 letras.")
@@ -180,6 +182,20 @@ def schema_health():
                 len(out["genres_pending"]), ", ".join(out["genres_pending"][:6])))
     out["ok"] = not out["problems"]
     return out
+
+
+def _classical_tree_problems(cfg):
+    """Why the GENRE path for classical albums (Clásica\\Orquestal\\Sinfonias) is not being proposed."""
+    status = tree_status(cfg)
+    if status == "missing":
+        return ["Falta la sección [classical_genres]: lo clásico se queda con GENRE = Classical "
+                "y tu jerarquía no se escribe. Fusiona la propuesta del análisis."]
+    if status == "disabled":
+        return ["[classical_genres] enabled = false: lo clásico se queda con GENRE = Classical."]
+    if status == "empty":
+        return ["[classical_rules] está vacía: no hay árbol de géneros clásicos que proponer."]
+    tree = Tree.from_cfg(cfg)
+    return ["[classical_rules]: %s" % p for p in (tree.problems if tree else [])]
 
 
 def is_junk_credit(name):

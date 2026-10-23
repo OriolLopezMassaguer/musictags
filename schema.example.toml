@@ -93,6 +93,45 @@ classical_period_style = true # Classical tracks with a known composer get STYLE
 # --- NOT mapped: decide (uncomment and edit) ---
 "Other" = []   # 1 tracks
 
+[classical_genres]
+# Classical GENRE as a path, e.g. "Clásica\\Orquestal\\Sinfonias": one per album, by vote of its works (SCHEMA.md, 'Classical genre tree')
+enabled = true
+existing = "recalc"           # "recalc" | "keep"  (recalc: always recompute; keep: trust a path already in the file)
+no_match = "root"             # "root" | "keep"  (root: tag the album with the root only; keep: leave GENRE alone)
+majority = 0.6               # the winning node needs this share of the album's works, else Varios / Otros
+min_coverage = 0.5           # and at least this share of the works must match some rule
+
+[classical_rules]
+# node path = [rules]. Rules are concepts joined by +; the list is OR; [] = a node that only receives
+# albums by vote. Concepts: forms (symphony, concerto, sonata, quartet, mass, opera, ...), instruments
+# (piano, violin, cello, ...), multi, solo, period:baroque, composer:bach, kw:text. Most + terms win.
+# Keys are full paths, so edit by hand with doubled backslashes.
+"Clásica" = []
+"Clásica\\Antigua" = ["period:medieval", "period:renaissance"]
+"Clásica\\Conciertos\\Piano" = ["concerto+piano"]
+"Clásica\\Conciertos\\Violin" = ["concerto+violin"]
+"Clásica\\Conciertos\\Cello" = ["concerto+cello"]
+"Clásica\\Conciertos\\Clarinete" = ["concerto+clarinet"]
+"Clásica\\Conciertos\\Clave" = ["concerto+harpsichord"]
+"Clásica\\Conciertos\\Varios" = ["concerto"]
+"Clásica\\Cámara\\Clave Solo" = ["harpsichord", "composer:scarlatti", "composer:couperin"]
+"Clásica\\Cámara\\Sonatas Violin" = ["sonata+violin", "partita+violin"]
+"Clásica\\Cámara\\Sonatas Cello" = ["sonata+cello", "suite+cello"]
+"Clásica\\Cámara\\Piano Solo" = ["sonata+piano", "keyboard_form", "piano+solo"]
+"Clásica\\Cámara\\Cuartetos" = ["quartet"]
+"Clásica\\Cámara\\Tríos" = ["trio"]
+"Clásica\\Cámara\\Quinteto De Cuerda" = ["quintet"]
+"Clásica\\Cámara\\Otros" = ["chamber"]
+"Clásica\\Orquestal\\Sinfonias" = ["symphony"]
+"Clásica\\Orquestal\\Barroco" = ["period:baroque+symphony", "concerto_grosso+period:baroque", "period:baroque+orchsuite"]
+"Clásica\\Orquestal\\Otros" = ["overture", "tone_poem", "orchsuite", "serenade"]
+"Clásica\\Escénica\\Ópera" = ["opera"]
+"Clásica\\Escénica\\Ballet" = ["ballet"]
+"Clásica\\Vocal\\Lied" = ["lied"]
+"Clásica\\Religiosa\\Misa" = ["mass", "requiem"]
+"Clásica\\Religiosa\\Otros" = ["sacred"]
+"Clásica\\Varios" = []
+
 [album]
 # Classical album names:  Bach - Cello Suites Nos. 1–6 (Pablo Casals)
 #                         Beethoven - Symphonies Nos. 5 & 7 (BPhO / Herbert von Karajan)

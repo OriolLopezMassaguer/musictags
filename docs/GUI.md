@@ -114,6 +114,10 @@ The state of the whole thing in one screen.
   entries in `keep_together` (`"… , Associated Performer, Violin, Main Artist - …"`).
   This exists because a `schema.toml` written before the classical-album feature simply
   has no `[album]` section, and step 3 then skips album renaming **without saying so**.
+  The classical genre tree is checked the same way: a missing or disabled
+  `[classical_genres]`, an empty `[classical_rules]`, and every problem the tree itself
+  reports (a node name containing `/ ; , |`, two nodes that differ only by accents or case,
+  a rule that is not a concept).
 - **Library stats** from `tags.sqlite`: tracks, albums (CD1/CD2 counted as one), how
   much of the library looks classical, formats, total size.
 - **Per-step cards**: whether the output exists, when it was written, and whether it is
@@ -123,6 +127,11 @@ The state of the whole thing in one screen.
 - **Field coverage**: what share of tracks has each tag today. The fields at 0 % are
   exactly the ones the pipeline fills.
 - Every step's flags as real controls, and the buttons to run it.
+- **Todo seguido**, the card above the steps: runs 1 → 2 → 3 → 4 back to back, taking
+  each step's options from that step's own form further down the page, and stops at the
+  first step that fails. Step 4 runs as a **dry run**: the chain never writes to your
+  music files, because writing is the one action that should stay a deliberate, confirmed
+  click. `./0_all.sh` is the same chain from a terminal.
 
 ### Fusionar
 
@@ -135,10 +144,10 @@ what the values should be.**
 
 | Difference | Default |
 |---|---|
-| A section you do not have (`[album]`, `[orchestra_abbrev]`) | add it, comments and all |
+| A section you do not have (`[album]`, `[orchestra_abbrev]`, `[classical_genres]`) | add it, comments and all |
 | A new option | add it |
-| A new map entry (a genre, orchestra or alias new to the library) | add it |
-| A value you changed by hand | keep yours |
+| A new map entry (a genre, orchestra or alias new to the library; a new node of `[classical_rules]`) | add it |
+| A value you changed by hand (a node's rule list included) | keep yours |
 | An entry that no longer appears in the library | keep it, flagged as orphaned |
 
 List options (`keep_together`, `taxonomy`, the separators) get a third choice, *unir las
@@ -159,8 +168,12 @@ those counts are what tell you whether a genre is worth deciding about.
   with no extra configuration.
 - **List options** become tag editors. `keep_together` gets a *quitar los créditos
   largos de iTunes* button for the scraped entries.
-- **Map sections** (`genre_map`, `orchestra_abbrev`, `aliases`, `sort_overrides`) become
-  searchable tables with inline edit, add and delete.
+- **Map sections** (`genre_map`, `classical_rules`, `orchestra_abbrev`, `aliases`,
+  `sort_overrides`) become searchable tables with inline edit, add and delete. In
+  `classical_rules` the key is the whole genre path (`Clásica\Orquestal\Sinfonias`, typed
+  with single backslashes) and the value is a JSON list of rules (`["symphony"]`, `[]` for a
+  node that only receives albums by vote). The two options of `[classical_genres]`
+  (`existing`, `no_match`) are dropdowns.
 - **Commented-out entries** — the `# "Moderna" = ["?"]   # 85 tracks` lines that step 2
   writes under *NOT mapped: decide* — show as rows marked *sin decidir*. Giving one a
   value uncomments it **in place**, keeping its position and its track count.
@@ -176,8 +189,9 @@ Rows are grouped with the proposer's own `album_key()`, so the grouping matches 
 step 3 thought, `CD1`/`Disc 2` collapsing included.
 
 - **Por álbum** (the default, because most of a classical library is albums): one card
-  per album with the proposed `ALBUM` rename old → new, the proposed album artist,
-  track and change counts, and confidence badges. Approve or reject a whole album from
+  per album with the proposed `ALBUM` rename old → new, the proposed album artist, the
+  proposed classical `GENRE` path (old → new), track and change counts, and confidence
+  badges. The rule filter has a `genre-tree` entry for just those rows. Approve or reject a whole album from
   the card; expand it for the per-track table.
 - **Lista de filas**: the flat table, for working one field at a time.
 - Filters on field, confidence, rule family and free text, plus *solo sin aprobar*.
@@ -204,9 +218,10 @@ The pages are thin; this is the actual surface. All JSON.
 |---|---|---|
 | `GET` | `/api/state` | pipeline freshness + current job |
 | `POST` | `/api/run/<step>` | `{params, write, confirm}`; `write` needs `confirm: "APLICAR"` |
+| `POST` | `/api/run-chain/<chain>` | `{params: {step_id: {…}}}` — several steps back to back; every argv is validated before the first one starts |
 | `GET` | `/api/job?id=&from=&wait=` | long-polled log tail |
 | `GET` | `/stream/<job_id>?from=` | the same as Server-Sent Events |
-| `POST` | `/api/job/stop` | terminate the running job |
+| `POST` | `/api/job/stop` | `{force}` — ask the job to stop at its next safe point (SIGTERM), or kill it (SIGKILL) |
 | `GET` | `/api/changes?view=albums\|rows&page=&size=&…filters` | paged, with facet counts |
 | `GET` | `/api/changes/album?key=` | the rows of one album |
 | `POST` | `/api/changes/approve` | `{scope: rows\|album\|filter, value, …}` |
@@ -215,8 +230,25 @@ The pages are thin; this is the actual surface. All JSON.
 | `POST` | `/schema/save` | `{set, remove, comment_out, preview}`; `preview` returns a diff instead of writing |
 | `POST` | `/merge/apply` | `{diff_id: "mine"\|"theirs"\|"union"\|"skip"}` |
 
+A job is a *list* of steps, so a single step and the whole chain are the same object:
+`/api/job` and `/stream/<id>` report `index`, `total` and `steps` alongside the step
+running now, and the log of a chain carries a `===== 2/4  analyze =====` banner between
+steps.
+
 Approvals and schema edits are held in server memory until you press *Guardar*, so an
 accidental reload loses the edits rather than half-writing them.
+
+## Stopping a run
+
+*Parar* sends SIGTERM, which the scripts turn into a tidy stop at their next safe point
+(`core.handle_interrupts`); the button then reads *Matar*, and a second press sends
+SIGKILL after a confirmation. Each job runs in its own process group, so the signal
+reaches any grandchild too.
+
+Stopping during a chain also cancels the steps that have not started — the log ends with
+`-- detenido: quedaban N paso(s) sin lanzar`. A stopped job finishes with return code 130
+and shows as *detenido*, not as an error. `docs/PIPELINE.md` has what each step
+guarantees when stopped.
 
 ## Files it writes
 
@@ -234,6 +266,8 @@ Both `*.bak` and `gui/logs/` are gitignored.
 python3 -m unittest discover gui/tests -t .
 ```
 
+(The pipeline-side tests are in `tests/`; see [ARCHITECTURE.md](ARCHITECTURE.md#tests).)
+
 The ones that matter:
 
 - **Round trip** — parsing and re-dumping `schema.toml`, `schema.proposed.toml` and
@@ -245,6 +279,14 @@ The ones that matter:
 - **Merge** — defaults, and that applying them keeps your decisions.
 - **changes.csv** — that a save touches only `approve` and `new`, and that the CD
   collapsing groups a file's rows together.
+- **Chains and stopping** (`test_runner_chain.py`) — a chain's argv are all built before
+  the first step starts; the steps run in order; a failure stops the rest; a stop lets the
+  running script choose its moment and cancels the steps not yet launched; `--force` kills
+  one that ignores SIGTERM; and `as_dict()` keeps the keys the templates read.
+- **Classical tree** (`test_classical_gui.py`) — keys with backslashes survive read, edit,
+  add and remove; the merge adds new nodes and leaves your rule lists alone; the album card
+  carries the proposed genre path; the schema page renders its `value` attributes and
+  removes a `Clásica\…` row through `/schema/save`; the health warnings fire.
 
 ## Troubleshooting
 
@@ -252,7 +294,9 @@ The ones that matter:
 |---|---|
 | Page does not open from another machine | DSM firewall; see *Giving another machine access* |
 | `403 Falta el token` | started with `--token`; add `?t=…` once and a cookie keeps it |
-| `ya hay un paso en marcha` | one job at a time, by design; wait or press *Parar* |
+| `ya hay algo en marcha` | one job at a time, by design; wait or press *Parar* |
+| A run shows *detenido* with code 130 | it was stopped on request, not a failure |
+| *Parar* does not seem to do anything | the step stops at its next safe point, which for a long scan is the current file; press again to kill it |
 | Log stops mid-run | progress is on stderr and is merged in; if the page was reloaded the log is still in `gui/logs/` |
 | *Cambios* says there is no `changes.csv` | run step 3 |
 | An edit vanished | schema and approval edits live in memory until *Guardar* |

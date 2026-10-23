@@ -18,6 +18,9 @@ from your own library by `analyze_tags.py` (genre map, name spellings, bands tha
    (`The Beatles` / `Beatles, The`; `Johann Sebastian Bach` / `Bach, Johann Sebastian`).
 4. **Small, closed genre list + open styles.** `GENRE` uses ~19 top-level genres so browsing stays
    usable; the detail (`Hard Rock`, `Rumba Catalana`, `Baroque`) moves to `STYLE`, nothing is lost.
+   The one exception is classical music: players that browse by `GENRE` only get a single
+   `Classical` bucket, so a classical album's `GENRE` can be a path (`Clásica\Orquestal\Sinfonias`),
+   see *Classical genre tree* below.
 5. **Classical is first-class.** Composer, work, movement, conductor and ensemble have their own tags.
 
 ## Fields
@@ -34,7 +37,7 @@ from your own library by `analyze_tags.py` (genre map, name spellings, bands tha
 | COMPOSERSORT | TSOC | COMPOSERSORT | soco | **yes** | `Lennon, John` · `McCartney, Paul` |
 | CONDUCTOR | TPE3 | CONDUCTOR | ----:CONDUCTOR | yes | `Herbert von Karajan` |
 | ENSEMBLE | TXXX:ENSEMBLE | ENSEMBLE | ----:ENSEMBLE | yes | `Berliner Philharmoniker` |
-| GENRE | TCON | GENRE | ©gen | **yes** (max 2) | `Rock` |
+| GENRE | TCON | GENRE | ©gen | **yes** (max 2) | `Rock` · `Clásica\Orquestal\Sinfonias` |
 | STYLE | TXXX:STYLE | STYLE | ----:STYLE | yes | `Hard Rock`, `Baroque` |
 | WORK | TXXX:WORK | WORK | ©wrk | no | `Cello Suite No. 1 in G major, BWV 1007` |
 | MOVEMENTNAME | MVNM | MOVEMENTNAME | ©mvn | no | `Prélude` |
@@ -77,6 +80,65 @@ artwork are read but never modified. ALBUM is only rewritten for classical album
   packed values like `Pop/Rock` are split first; ID3 numeric genres `(17)` are decoded.
 - Classical tracks with a known composer get the period as STYLE (`Baroque`, `Romantic`, `Modern`…).
 - If your player ignores STYLE, set `style_into_genre = true`.
+- Classical albums get a path as GENRE instead of the bare `Classical` (next section).
+
+**Classical genre tree** (`[classical_genres]` + `[classical_rules]`)
+
+Navigation by `GENRE` alone (an Android player, for instance) shows one flat `Classical` entry. With a
+tree, the same player shows `Clásica` → `Orquestal` → `Sinfonias`. The path is **one string with
+backslashes** in `GENRE`; `STYLE` keeps the composer's period, and non-classical genres are untouched.
+
+```
+GENRE = Clásica\Orquestal\Sinfonias        STYLE = Romantic     Beethoven - Symphonies Nos. 5 & 7 (...)
+GENRE = Clásica\Conciertos\Cello           STYLE = Romantic     Dvořák - Cello Concerto, Op. 104 (...)
+GENRE = Clásica\Religiosa\Misa             STYLE = Classical    Mozart - Requiem (...)
+GENRE = Clásica\Varios                     (a disc with a concerto and a symphony)
+```
+
+- **One path per album**, not per track, so the album does not scatter across the tree. Every work votes
+  once (the same work on ten tracks is one vote); the winning node needs `majority` (default 60 %) of the
+  works, and at least `min_coverage` (50 %) of the works must match some rule. Otherwise the album goes to
+  the lowest common ancestor: its `Varios` child, else `Otros`, else the ancestor itself. With no match at
+  all: the root (`no_match = "root"`) or leave `GENRE` alone (`"keep"`).
+- **Rules** are in `[classical_rules]`: `"full path" = [rule, ...]`. A rule is concepts joined by `+`; the
+  list is an OR; `[]` is a node that only receives albums by vote (`Varios`, the root).
+  The node with the most `+` terms wins, then file order. Concepts:
+  - forms: `symphony` `concerto` `concerto_grosso` `sonata` `suite` `partita` `variations` `quartet`
+    `quintet` `trio` `chamber` `mass` `requiem` `sacred` `cantata` `opera` `zarzuela` `ballet` `lied`
+    `overture` `tone_poem` `orchsuite` `serenade` `keyboard_form` (nocturne, étude, mazurka…);
+  - instruments: `piano` `violin` `viola` `cello` `flute` `oboe` `clarinet` `bassoon` `horn` `trumpet`
+    `harp` `guitar` `lute` `harpsichord` `organ` `saxophone`, plus `solo` and `multi` (double concerto);
+  - `period:baroque` (as in `STYLE`), `composer:bach` (surname), `kw:text` (a word in the work/title).
+  Words are recognised in English, Spanish, German, French and Italian (`Klavierkonzert`, `Cellosonate`,
+  `Sinfonía`, `Réquiem`).
+- **Your own path wins over the rules only when they agree or refine it.** The most common path already on
+  the album is compared with the new one (ignoring accents and case): same node → the spelling is
+  normalised; yours is an ancestor (`Clásica` alone) → refined; the new one is an ancestor of yours → yours
+  stays; they conflict → the new path with `low` confidence and `was <yours>` in the rule text.
+  A path that is not in the tree at all (`Clásica\Cámara\Dúos` that you made up) is kept unless a rule
+  matches. `existing = "keep"` trusts any path already in the file; the default `"recalc"` recomputes.
+- **Confidence is never `high`.** `medium` (pre-approved) only for a unanimous album whose works are
+  at least 80 % matched; majorities, album-title fallbacks, `Varios`/`Otros` and the root are `low`.
+  Rule text: `genre-tree: Clásica\Orquestal\Sinfonias (3 of 3 works)`; filter the *Cambios* page by
+  the `genre-tree` rule to review them.
+- **Idempotent.** The path is a function of the works, composers and periods, so running the proposal
+  again on a tagged library produces no rows.
+- **Node names** cannot contain `/ ; , |` (they are the genre separators). In a hand-edited `schema.toml`
+  the backslashes are doubled (`"Clásica\\Cámara\\Cuartetos"`); the GUI does it for you.
+- Without `[classical_genres]` (or with `enabled = false`) nothing changes: classical tracks keep
+  `GENRE = Classical` and any `Clásica\…` genre you had is demoted to `STYLE`, as before. `propose_changes`
+  and the GUI dashboard warn about it.
+
+*Your tree against the standard one.* `analyze_tags.py` has a standard tree built in (the 25 nodes of
+`schema.example.toml`: `Antigua`, `Conciertos\{Piano,Violin,Cello,Clarinete,Clave,Varios}`,
+`Cámara\{…}`, `Orquestal\{Sinfonias,Barroco,Otros}`, `Escénica`, `Vocal`, `Religiosa`, `Varios`).
+It reads the `Clásica\…` genres of your files and writes, in `report.md`, a **Classical genre tree**
+section: every genre of yours with its albums and tracks and whether it is *the same node*, *the same
+up to accents/case*, *extends the standard* (`Sonatas Violin Y Piano` under `Sonatas Violin`) or *is not in
+the standard*, plus the standard nodes you do not have. `schema.proposed.toml` carries your tree first
+(in your spelling, with the standard rules), then the standard nodes you lack marked `# 0 tracks (standard)`.
+The root is the commonest first segment of your paths (`--classical-root "Música Clásica"` forces one).
+Merge it with **Fusionar** in the GUI: new nodes are added, the rules you edited are not touched.
 
 **Classical album names** (`[album]` section; only albums that look classical)
 
