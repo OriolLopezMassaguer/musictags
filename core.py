@@ -63,6 +63,9 @@ def load_config(path: str | os.PathLike) -> dict:
         return tomllib.load(fh)
 
 
+PAD_HEADROOM = 16 * 1024      # bytes of free space left after a tag that had to grow
+
+
 def _kind(audio) -> str:
     if isinstance(audio, MP4):
         return "mp4"
@@ -129,6 +132,11 @@ def read_tags(path) -> tuple[str, dict[str, list[str]]]:
 # --------------------------------------------------------------------------- #
 # Writing                                                                      #
 # --------------------------------------------------------------------------- #
+def _padding(info) -> int:
+    """mutagen padding callback: info.padding < 0 means the new tag does not fit."""
+    return info.padding if info.padding >= 0 else PAD_HEADROOM
+
+
 def write_tags(path, changes: dict[str, list[str]], id3_version: int = 4) -> None:
     """Apply {field: [values]} to a file. An empty list removes the field."""
     for f in changes:
@@ -171,13 +179,18 @@ def write_tags(path, changes: dict[str, list[str]], id3_version: int = 4) -> Non
             else:
                 tags[mp4k] = values
 
+    # Padding policy: mutagen only edits in place when the new tag fits the existing padding,
+    # otherwise it rewrites the whole audio file. Keep whatever padding there is (never trim it,
+    # the default trims big padding and forces a rewrite next time) and, when the tag has to grow,
+    # leave generous headroom so later edits are in place. Ogg/Opus .save() takes no padding.
+    pad = {"padding": _padding} if kind in ("id3", "mp4") or hasattr(audio, "pictures") else {}
     if kind == "id3":
         if id3_version == 3:
-            audio.save(v2_version=3, v23_sep="; ")
+            audio.save(v2_version=3, v23_sep="; ", **pad)
         else:
-            audio.save(v2_version=4)
+            audio.save(v2_version=4, **pad)
     else:
-        audio.save()
+        audio.save(**pad)
 
 
 # --------------------------------------------------------------------------- #
