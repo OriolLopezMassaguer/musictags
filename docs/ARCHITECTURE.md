@@ -134,7 +134,11 @@ Anything added here has to keep these true.
    not written at all.
 8. **Without `[classical_genres]` the proposal is exactly the old one.** The classical genre
    tree is opt-in through the schema, like `[album]`.
-9. **Tree keys keep their backslashes.** A node is one key with single `\` in memory and doubled
+9. **A stop is cooperative, never a kill.** Signals set a flag that the loops read at a
+   safe point (`core.handle_interrupts`); nothing may stop a step inside `write_tags()`,
+   and no step may leave a partial output file where a complete one is expected — build
+   it aside and rename it (step 3) or write it in one go at the end (step 2).
+10. **Tree keys keep their backslashes.** A node is one key with single `\` in memory and doubled
    `\\` in the file; nothing may splice a key into inline JavaScript (`dropRow` once did) or run
    it through `core.genre_key()`, which turns `\` into a space. Use `classical_genres.path_key`.
 
@@ -143,6 +147,12 @@ Anything added here has to keep these true.
 **A new step flag** — add it to the step's `args` in `gui/runner.py:STEPS` and to the
 script's `argparse`. The form control, the argv and the validation all follow from the
 declaration; no template change.
+
+**A new chain** — add an entry to `gui/runner.py:CHAINS` (`steps` is a list of step ids).
+The panel card, the button and the endpoint all follow from it. A `Job` holds a *list* of
+`(step_id, argv)`, so a single step is a chain of one and there is only one code path for
+the log, the SSE stream and stopping. A chain never passes `write`: `0_all.sh` and the
+button both leave step 4 as a dry run.
 
 **A new schema section** — it appears in the editor automatically. Add a line to
 `SECTION_HELP` in `gui/app.py`, and to `MAP_SECTIONS` in `gui/schema_merge.py` if its

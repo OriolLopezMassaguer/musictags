@@ -10,8 +10,13 @@ Four Python scripts and a web GUI. Nothing touches your files until step 4 is gi
 | 3 | `propose_changes.py` | `tags.sqlite`, `schema.toml` | `changes.csv` |
 | 4 | `apply_changes.py changes.csv --apply` | `changes.csv` | your files + `undo_*.jsonl` |
 
-Wrappers: `1_scan.sh` … `5_undo.sh` for the steps, `gui.sh` / `gui-local.sh` to serve the
-web interface, and `tunnel.ps1` to reach it from a Windows machine over SSH.
+Wrappers: `1_scan.sh` … `5_undo.sh` for the steps, `0_all.sh` to run steps 1-4 back to
+back (step 4 as a dry run), `gui.sh` / `gui-local.sh` to serve the web interface, and
+`tunnel.ps1` to reach it from a Windows machine over SSH. The GUI has the same chain
+behind its *Todo seguido* button.
+
+Every step can be stopped with Ctrl-C (or the GUI's *Parar*) and stops at a point where
+stopping is safe — never in the middle of writing a file. See *Stopping a run* below.
 
 Classical albums are renamed to `Composer - works (soloist | ORCH / conductor)`, e.g.
 `Beethoven - Symphonies Nos. 5 & 7 (BPhO / Herbert von Karajan)`, and get a hierarchical
@@ -54,6 +59,14 @@ passed straight through to the Python script.
 ./5_undo.sh undo_20261020_140000.jsonl --apply   # if needed
 ```
 
+Or all of 1-4 in one go, stopping at the first failure (step 4 stays a dry run, so
+nothing is written to your files):
+
+```
+./0_all.sh                        # scan, analyze, propose, dry-run apply
+./0_all.sh --skip-scan            # start at step 2 if the library has not changed
+```
+
 Then iterate: edit `schema.toml` → re-propose → review → apply. You can narrow the work
 down with `./3_propose.sh --only genre,style` or `--path "/music/Classical"` (give it whole
 albums: the classical genre is voted per album).
@@ -66,6 +79,24 @@ differ. *Fusionar* then brings `[classical_genres]` and `[classical_rules]` into
 > scratch every run, so copying it over discards every decision you made by hand —
 > mapped genres, orchestra codes, aliases, `keep_together`. Use the GUI's *Fusionar*
 > page, which merges the two and keeps your edits, or diff them yourself.
+
+## Stopping a run
+
+Ctrl-C, or *Parar* in the GUI (which sends the same signal), asks the running script to
+stop; it finishes what it has in hand and then exits with code **130**. Signalling a
+second time kills it outright, which should only ever be needed if it is wedged.
+
+What "a safe point" means per step:
+
+| Step | Stops | What survives |
+|---|---|---|
+| 1 scan | after the file being read | every file read so far is committed; run it again and it continues from there |
+| 2 analyze | between sections | nothing is written, so `report.md` and `schema.proposed.toml` stay as they were |
+| 3 propose | between tracks | the CSV is built as `changes.csv.part` and renamed only when finished, so the previous `changes.csv` is untouched |
+| 4 apply | **between files, never inside a write** | no file is left half-tagged, and the `undo_*.jsonl` already covers everything written before the stop |
+
+`0_all.sh` and the GUI chain both stop at the step that was interrupted and skip the
+rest.
 
 ## GUI
 

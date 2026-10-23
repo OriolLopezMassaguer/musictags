@@ -21,6 +21,30 @@ easy to wrap (the GUI runs these very scripts as subprocesses).
 
 Nothing touches your music until step 4 is given `--apply`.
 
+`./0_all.sh` runs steps 1-4 in order (step 4 as a dry run), stopping at the first
+failure; `--skip-scan` starts at step 2. The GUI's *Todo seguido* button is the same
+chain, built from `gui/runner.py:CHAINS`.
+
+---
+
+## Stopping a step
+
+Every step installs `core.handle_interrupts()`, so SIGINT (Ctrl-C) and SIGTERM (what the
+GUI's *Parar* sends) do **not** kill it where it stands. The handler only raises a flag;
+the long loops ask `core.check_stop()` / `core.stopping()` at a point where stopping
+costs nothing, and the step exits with code **130**. The handler then steps aside, so a
+second signal kills a wedged run for real.
+
+This matters most for step 4: a process killed inside `write_tags()` can leave a
+half-written file, and that is the one damage this toolkit cannot undo.
+
+| Step | Checks at | Guarantee when stopped |
+|---|---|---|
+| 1 scan | after each file, and while listing the tree | Everything read is committed (`finally: db.commit()`), and the pending reads are cancelled (`pool.shutdown(cancel_futures=True)` — `pool.map` queues all 11k paths up front, so without it the whole library would still be read). The stale-entry sweep and the CSV export are skipped, since both would describe a partial scan. Re-run it and it continues from there. |
+| 2 analyze | between report sections, and inside the `--fuzzy` bucket loop | Nothing at all is written: both outputs are produced in one `write()` at the very end, so `report.md` and `schema.proposed.toml` keep their previous contents. |
+| 3 propose | between tracks | The CSV is written to `changes.csv.part` and `os.replace()`d into place only on success, so an interrupted run leaves the previous `changes.csv` byte for byte. The `.part` file is removed. |
+| 4 apply | **between files only** | No file is left half-tagged. The `undo_*.jsonl` is flushed before each write, so everything written before the stop is undoable; the cache is refreshed for those files and the normal summary is printed with an `Interrupted after N of M files` line. |
+
 ---
 
 ## config.sh

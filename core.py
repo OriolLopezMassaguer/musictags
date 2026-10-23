@@ -5,6 +5,7 @@ core.py - shared code for the music tagging toolkit.
 * read_tags(path) -> {field: [values]}
 * write_tags(path, {field: [values]})   ([] deletes the field)
 * name / genre normalisation helpers
+* cooperative interruption: handle_interrupts() / check_stop()
 * built-in seed data: classical composers and genre keywords
 """
 from __future__ import annotations
@@ -12,6 +13,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
+import sys
 import unicodedata
 from pathlib import Path
 
@@ -23,6 +26,54 @@ except ModuleNotFoundError:  # pragma: no cover
 import mutagen
 from mutagen.id3 import ID3, ID3NoHeaderError, Frames, TXXX
 from mutagen.mp4 import MP4, MP4FreeForm
+
+# --------------------------------------------------------------------------- #
+# Cooperative interruption                                                     #
+# --------------------------------------------------------------------------- #
+# Ctrl-C (SIGINT) and the GUI's "Parar" button (SIGTERM) must never kill a step
+# in the middle of a tag write or a database commit: a half-written file is the
+# one damage this toolkit cannot undo. So the handler does nothing but raise a
+# flag; the long loops ask check_stop() (or stopping()) where stopping is safe,
+# and main() turns that into a normal summary and exit code 130. The handler
+# then steps aside, so signalling a second time still kills a wedged run.
+
+EXIT_INTERRUPTED = 130
+
+
+class Interrupted(Exception):
+    """Raised by check_stop() once a stop was asked for, at a safe point."""
+
+
+_STOP = False
+
+
+def handle_interrupts(note="\nStopping at the next safe point "
+                           "(signal again to force)..."):
+    """Install the SIGINT/SIGTERM handlers. Call it first thing in main()."""
+    def ask_stop(signum, _frame):
+        global _STOP
+        _STOP = True
+        signal.signal(signum, signal.SIG_DFL)      # a second one kills us
+        if note:
+            print(note, file=sys.stderr, flush=True)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, ask_stop)
+        except ValueError:                         # not the main thread
+            pass
+
+
+def stopping():
+    """True once a stop was asked for -- for loops that clean up themselves."""
+    return _STOP
+
+
+def check_stop():
+    """Raise Interrupted if a stop was asked for. Safe points only."""
+    if _STOP:
+        raise Interrupted()
+
 
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".ogg", ".oga", ".opus", ".m4a", ".mp4", ".m4b"}
 LIST_SEP = " || "  # how lists are shown in CSV files

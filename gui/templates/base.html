@@ -28,7 +28,9 @@
      data-running="{{ '1' if current_job.running else '0' }}"{% endif %}>
   <div class="bar">
     <span class="dot {{ 'run' if current_job and current_job.running }}"></span>
-    <span class="label">{% if current_job %}{{ current_job.step }}{% else %}Registro de ejecución{% endif %}</span>
+    <span class="label">{% if current_job %}{% if current_job.total > 1
+      %}{{ current_job.label }} {{ current_job.index + 1 }}/{{ current_job.total }} ·
+      {% endif %}{{ current_job.step }}{% else %}Registro de ejecución{% endif %}</span>
     <span class="right"></span>
     <button class="tiny danger stop" {{ '' if current_job and current_job.running else 'hidden' }}>Parar</button>
   </div>

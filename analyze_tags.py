@@ -18,10 +18,12 @@ import json
 import os
 import re
 import sqlite3
+import sys
 from collections import Counter, defaultdict
 
-from core import (FIELDS, TAXONOMY, composer_aliases, composer_period, dumps_toml_str,
-                  genre_key, name_key, strip_accents, suggest_genre)
+from core import (EXIT_INTERRUPTED, FIELDS, TAXONOMY, Interrupted, check_stop,
+                  composer_aliases, composer_period, dumps_toml_str, genre_key,
+                  handle_interrupts, name_key, strip_accents, suggest_genre)
 from rules import DEFAULT_FEAT, DEFAULT_KEEP, DEFAULT_SPLIT, CreditSplitter
 from album_names import OrchestraCodes, classify
 import classical_genres as cg
@@ -78,6 +80,7 @@ def main():
                     help="a 'A & B' credit whose parts never appear alone is kept together "
                          "if it is used on at least this many tracks")
     args = ap.parse_args()
+    handle_interrupts()
 
     rows, root = load(args.db)
     ok = [(p, f, t) for p, f, t, e in rows if not e]
@@ -91,6 +94,7 @@ def main():
     R.append("* Formats: " + ", ".join(f"{k} {v}" for k, v in fmts.most_common()))
     R += ["", "## Field usage", "", "| field | tracks with value | % | multi-valued |", "|---|---|---|---|"]
     for f in FIELDS:
+        check_stop()
         have = sum(1 for _, _, t in ok if t.get(f))
         multi = sum(1 for _, _, t in ok if len(t.get(f, [])) > 1)
         R.append(f"| {f} | {have} | {100 * have / max(n, 1):.0f}% | {multi} |")
@@ -112,6 +116,7 @@ def main():
     sep_count = {fld: Counter() for fld in ("artist", "albumartist", "composer", "genre")}
     sep_example = {}
     for _, _, t in ok:
+        check_stop()
         for fld in sep_count:
             for v in t.get(fld, []):
                 for name, rx in SEPARATOR_PROBES.items():
@@ -209,6 +214,7 @@ def main():
         for k in keys:
             buckets[k[:2]].append(k)
         for bucket in buckets.values():
+            check_stop()
             for i, a in enumerate(bucket):
                 for b in bucket[i + 1:]:
                     sm = difflib.SequenceMatcher(None, a, b)
@@ -251,6 +257,7 @@ def main():
     spelled = defaultdict(Counter)                       # path_key -> {spelling: tracks}
     path_albums = defaultdict(set)                       # path_key -> {album key}
     for fp, _, t in ok:
+        check_stop()
         in_track = set()
         for v in t.get("genre", []):
             raw_genres[v] += 1
@@ -470,4 +477,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Interrupted:
+        # Both outputs are written in one go at the end, so there is nothing
+        # half-finished to clean up: the old report and proposal are intact.
+        print("\nInterrupted: report.md and schema.proposed.toml left untouched.",
+              file=sys.stderr)
+        sys.exit(EXIT_INTERRUPTED)

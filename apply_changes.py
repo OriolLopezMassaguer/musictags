@@ -9,6 +9,9 @@ Step 4 - apply_changes.py: write the approved changes to the files (with undo).
 Only rows with approve = y/yes/x/1 are applied. Before writing, each file is re-read:
 if a field no longer has the 'old' value of the CSV (the file changed after the scan),
 that change is skipped (use --force to override).
+
+Ctrl-C (or the GUI's "Parar") is honoured between files, never inside a write, so no
+file is ever left half-tagged. The undo log covers what was written before stopping.
 """
 import argparse
 import csv
@@ -18,7 +21,8 @@ import sys
 import time
 from collections import defaultdict
 
-from core import LIST_SEP, read_tags, write_tags, load_config
+from core import (EXIT_INTERRUPTED, LIST_SEP, handle_interrupts, load_config, read_tags,
+                  stopping, write_tags)
 
 YES = {"y", "yes", "x", "1", "true", "si", "sí"}
 
@@ -46,7 +50,13 @@ def run(plan, apply, force, id3_version, log_path, db_path):
     done = skipped = failed = 0
     log = open(log_path, "a", encoding="utf-8") if apply else None
     written = []
+    interrupted = False
     for path, items in plan.items():
+        if stopping():
+            # Between two files: the previous write_tags() finished and its undo
+            # lines are already flushed, so stopping here loses nothing.
+            interrupted = True
+            break
         try:
             _, cur = read_tags(path)
         except Exception as exc:
@@ -86,10 +96,14 @@ def run(plan, apply, force, id3_version, log_path, db_path):
     verb = "Applied" if apply else "Would apply"
     print(f"\n{verb} {done} field changes in {len(written) if apply else len(plan)} files; "
           f"skipped {skipped}; failed {failed}.", file=sys.stderr)
+    if interrupted:
+        print(f"Interrupted after {len(written) if apply else done} of {len(plan)} files "
+              "(stopped between files, none left half-written).", file=sys.stderr)
     if apply:
         print(f"Undo log: {log_path}", file=sys.stderr)
     else:
         print("Dry run only. Add --apply to write.", file=sys.stderr)
+    return EXIT_INTERRUPTED if interrupted else 0
 
 
 def main():
@@ -106,6 +120,7 @@ def main():
     ap.add_argument("--db", default="tags.sqlite", help="cache to refresh after writing")
     ap.add_argument("--limit", type=int, help="only the first N files (useful for a first test)")
     args = ap.parse_args()
+    handle_interrupts()
 
     try:
         id3v = int(load_config(args.schema).get("general", {}).get("id3_version", 4))
@@ -131,8 +146,8 @@ def main():
 
     if args.limit:
         plan = dict(list(plan.items())[: args.limit])
-    run(plan, args.apply, args.force, id3v, log_path, args.db)
+    return run(plan, args.apply, args.force, id3v, log_path, args.db)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

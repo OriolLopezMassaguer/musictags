@@ -37,7 +37,8 @@ function toast(msg, kind = 'ok') {
 /* ------------------------------------------------------------------ drawer */
 
 const Drawer = {
-  node: null, pre: null, label: null, dot: null, source: null,
+  node: null, pre: null, label: null, dot: null, source: null, stopBtn: null,
+  asked: false,          // "Parar" already pressed: the next press forces
 
   init() {
     this.node = document.getElementById('drawer');
@@ -62,12 +63,26 @@ const Drawer = {
     catch (e) { /* storage blocked or full */ }
   },
 
-  // fresh=false: re-attaching after a page load. A job that already ended is only
-  // displayed, not "finished" again (no repeated toast, no onJobDone reload).
-  attach(jobId, running, fresh = true) {
-    const old = fresh ? null : this.cached(jobId);
-    this.pre.textContent = old || '';
-    if (old) this.scroll();
+  /* First press asks the script to stop at its next safe point; the second
+     one kills it, which is only ever needed if it is wedged. */
+  async stop() {
+    const force = this.asked;
+    if (force && !confirm(
+      'Matar el proceso ahora mismo.\n\nSi está escribiendo tags, el fichero que '
+      + 'tenga entre manos puede quedar a medias. Solo si se ha quedado colgado.'
+      + '\n\n¿Matarlo?')) return;
+    const d = await api.post('/api/job/stop', { force });
+    if (!d.ok) { toast(d.error || 'No se ha podido parar.', 'bad'); return; }
+    this.asked = true;
+    if (this.stopBtn) this.stopBtn.textContent = 'Matar';
+    toast(force ? 'Proceso matado.' : 'Parando en el siguiente punto seguro…', 'warn');
+  },
+
+  attach(jobId, running) {
+    this.open();
+    this.asked = false;
+    if (this.stopBtn) this.stopBtn.textContent = 'Parar';
+    this.pre.textContent = '';
     if (this.source) this.source.close();
     api.get(`/api/job?id=${encodeURIComponent(jobId)}`).then((d) => {
       const text = (d.lines || []).join('\n');
@@ -96,19 +111,29 @@ const Drawer = {
 
   status(job, running) {
     if (!job) return;
-    this.dot.className = 'dot' + (running ? ' run' : (job.returncode ? ' bad' : ' ok'));
+    const stopped = job.stopped || (!running && job.returncode === 130);
+    this.dot.className = 'dot'
+      + (running ? ' run' : (stopped ? '' : (job.returncode ? ' bad' : ' ok')));
+    const name = job.total > 1
+      ? `${job.label} ${job.index + 1}/${job.total} · ${job.step}`
+      : job.step;
+    const how = stopped ? 'detenido'
+      : (job.returncode === 0 ? 'terminado' : `error ${job.returncode}`);
     this.label.textContent = running
-      ? `${job.step}: en marcha…`
-      : `${job.step}: ${job.returncode === 0 ? 'terminado' : 'error ' + job.returncode} (${job.elapsed}s)`;
-    document.querySelectorAll('[data-run]').forEach((b) => { b.disabled = running; });
-    const stop = this.node.querySelector('.stop');
-    if (stop) stop.hidden = !running;
+      ? `${name}: en marcha…${job.stopping ? ' (parando)' : ''}`
+      : `${name}: ${how} (${job.elapsed}s)`;
+    document.querySelectorAll('[data-run],[data-run-chain]')
+      .forEach((b) => { b.disabled = running; });
+    if (this.stopBtn) this.stopBtn.hidden = !running;
   },
 
   finish(job) {
     this.status(job, false);
-    if (job && job.returncode === 0) toast(`Paso «${job.step}» terminado.`, 'ok');
-    else if (job) toast(`El paso «${job.step}» ha fallado (código ${job.returncode}).`, 'bad');
+    if (!job) return;
+    const what = job.total > 1 ? `«${job.label}»` : `El paso «${job.step}»`;
+    if (job.stopped || job.returncode === 130) toast(`${what}: detenido.`, 'warn');
+    else if (job.returncode === 0) toast(`${what}: terminado.`, 'ok');
+    else toast(`${what} ha fallado en «${job.step}» (código ${job.returncode}).`, 'bad');
     setTimeout(() => { if (window.onJobDone) window.onJobDone(job); }, 200);
   },
 
@@ -145,6 +170,22 @@ async function runStep(stepId, form, write) {
   Drawer.attach(d.job.id, true);
 }
 
+/* The chain takes each step's own options from the forms already on the page,
+   so what you see under "Opciones y ejecución" is what it runs. */
+function allStepParams() {
+  const out = {};
+  document.querySelectorAll('[data-step-form]').forEach((f) => {
+    out[f.dataset.step] = stepParams(f);
+  });
+  return out;
+}
+
+async function runChain(chainId) {
+  const d = await api.post(`/api/run-chain/${chainId}`, { params: allStepParams() });
+  if (!d.ok) { toast(d.error || 'No se ha podido lanzar.', 'bad'); return; }
+  Drawer.attach(d.job.id, true);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   Drawer.init();
   document.querySelectorAll('[data-run]').forEach((btn) => {
@@ -152,5 +193,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const form = btn.closest('[data-step-form]');
       runStep(btn.dataset.run, form, btn.dataset.write === '1');
     });
+  });
+  document.querySelectorAll('[data-run-chain]').forEach((btn) => {
+    btn.addEventListener('click', () => runChain(btn.dataset.runChain));
   });
 });

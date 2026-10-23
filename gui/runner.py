@@ -3,6 +3,11 @@
 The steps are declared here rather than hard-coded in the templates, so the forms,
 the argv and the staleness checks on the dashboard all come from one place.
 
+A job is a *list* of steps, so one code path covers a single step and the whole
+chain (CHAINS). It stops at the first failure, and "Parar" asks the running
+script to stop at its next safe point (SIGTERM, which core.handle_interrupts
+turns into a tidy exit) before escalating to SIGKILL on a second press.
+
 Note on the log: scan_tags.py writes its progress to stderr and its summary to
 stdout, so both streams are merged -- keeping them apart loses the progress counter.
 """
@@ -10,6 +15,7 @@ stdout, so both streams are merged -- keeping them apart loses the progress coun
 import glob
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -17,6 +23,9 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_DIR = os.path.join(ROOT, "gui", "logs")
+
+sys.path.insert(0, ROOT)
+from core import EXIT_INTERRUPTED            # noqa: E402  (ROOT must come first)
 
 
 def music_dir():
@@ -108,6 +117,21 @@ STEPS = [
 
 BY_ID = {s["id"]: s for s in STEPS}
 
+# Running several steps back to back. Step 4 is included as a dry run only:
+# writing to the music files stays a separate, explicitly confirmed action.
+CHAINS = [
+    {
+        "id": "all", "label": "Todo seguido", "sh": "./0_all.sh",
+        "steps": ["scan", "analyze", "propose", "apply"],
+        "desc": "Escanear, analizar, proponer y simular la aplicación, uno detrás de "
+                "otro, con las opciones de cada paso de abajo. Se detiene en cuanto "
+                "uno falla.",
+        "note": "El paso 4 va en simulación: no escribe nada en tus ficheros. "
+                "Aplicar de verdad sigue siendo un botón aparte, con confirmación.",
+    },
+]
+BY_CHAIN = {c["id"]: c for c in CHAINS}
+
 
 def undo_logs():
     return sorted((os.path.basename(p) for p in glob.glob(os.path.join(ROOT, "undo_*.jsonl"))),
@@ -196,28 +220,52 @@ def _safe_path(p):
     return full
 
 
-class Job:
-    """One run of one step. Its lines are kept so the log survives a page reload."""
+def build_chain(chain_id, params_by_step):
+    """Chain id + {step_id: form values} -> [(step_id, argv)].
 
-    def __init__(self, step_id, argv, write):
-        self.id = "%s-%s" % (step_id, time.strftime("%Y%m%d_%H%M%S"))
-        self.step_id = step_id
-        self.argv = argv
+    Every argv is built up front: a bad --path must fail now, not three steps in.
+    """
+    chain = BY_CHAIN.get(chain_id)
+    if chain is None:
+        raise BadRequest("cadena desconocida: %s" % chain_id)
+    params_by_step = params_by_step or {}
+    return chain, [(sid, build_argv(sid, params_by_step.get(sid) or {}))
+                   for sid in chain["steps"]]
+
+
+class Job:
+    """One run: a single step, or a chain of them. Its lines survive a reload."""
+
+    def __init__(self, plan, write=False, label=None, chain_id=None):
+        """plan: [(step_id, argv)], run in order, stopping at the first failure."""
+        self.plan = list(plan)
+        self.chain_id = chain_id
+        self.step_id = self.plan[0][0]                  # the one running right now
+        self.label = label or BY_ID[self.step_id]["label"]
+        self.id = "%s-%s" % (chain_id or self.step_id, time.strftime("%Y%m%d_%H%M%S"))
         self.write = write
         self.lines = []
         self.returncode = None
+        self.index = 0
         self.started = time.time()
         self.finished = None
         self.log_path = os.path.join(LOG_DIR, self.id + ".log")
         self._cond = threading.Condition()
         self._proc = None
+        self._stopping = False
+        self._forced = False
 
     @property
     def running(self):
         return self.finished is None
 
+    @property
+    def total(self):
+        return len(self.plan)
+
     def command(self):
-        return " ".join(["python3" if a == sys.executable else a for a in self.argv])
+        """The command line of the step running now."""
+        return _pretty(self.plan[self.index][1])
 
     def start(self):
         os.makedirs(LOG_DIR, exist_ok=True)
@@ -229,24 +277,61 @@ class Job:
             env=dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8", PYTHONUTF8="1"))
         threading.Thread(target=self._pump, daemon=True).start()
 
+    # -- the chain ---------------------------------------------------------
+
     def _pump(self):
+        code = 0
         with open(self.log_path, "w", encoding="utf-8") as fh:
-            fh.write("$ %s\n" % self.command())
-            for line in self._proc.stdout:
-                line = line.rstrip("\n")
-                fh.write(line + "\n")
-                fh.flush()
-                self._emit(line)
-        self._proc.wait()
+            for i, (step_id, argv) in enumerate(self.plan):
+                if self._stopping:
+                    self._write(fh, "-- detenido: quedaban %d paso(s) sin lanzar"
+                                    % (self.total - i))
+                    code = code or EXIT_INTERRUPTED
+                    break
+                with self._cond:
+                    self.index, self.step_id = i, step_id
+                if self.total > 1:
+                    self._write(fh, "")
+                    self._write(fh, "===== %d/%d  %s =====" % (i + 1, self.total, step_id))
+                code = self._run_one(fh, argv)
+                if code:
+                    if self.total > 1 and not self._stopping:
+                        self._write(fh, "-- %s ha terminado con el código %d: "
+                                        "la cadena se detiene aquí." % (step_id, code))
+                    break
         with self._cond:
-            self.returncode = self._proc.returncode
+            self.returncode = code
             self.finished = time.time()
             self._cond.notify_all()
+
+    def _run_one(self, fh, argv):
+        self._write(fh, "$ " + _pretty(argv))
+        proc = subprocess.Popen(
+            argv, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1, errors="replace",
+            # its own process group, so a stop reaches any grandchild too
+            start_new_session=True,
+            env=dict(os.environ, PYTHONUNBUFFERED="1"))
+        with self._cond:
+            self._proc = proc
+        if self._stopping:                  # pressed between two steps
+            self._signal(proc, signal.SIGTERM)
+        with proc:                          # closes the pipe and waits
+            for line in proc.stdout:
+                self._write(fh, line.rstrip("\n"))
+        return proc.returncode
+
+    def _write(self, fh, line):
+        fh.write(line + "\n")
+        fh.flush()
+        self._emit(line)
 
     def _emit(self, line):
         with self._cond:
             self.lines.append(line)
             self._cond.notify_all()
+
+    # -- following and stopping -------------------------------------------
 
     def follow(self, start=0, timeout=0.0):
         """Lines from `start` on, blocking up to `timeout` for the next one."""
@@ -255,16 +340,46 @@ class Job:
                 self._cond.wait(timeout)
             return self.lines[start:], len(self.lines), self.running
 
-    def stop(self):
-        if self._proc and self.running:
-            self._proc.terminate()
+    def stop(self, force=False):
+        """Ask the run to stop. Cancels the rest of the chain either way."""
+        with self._cond:
+            self._stopping = True
+            self._forced = self._forced or force
+            proc = self._proc
+        if proc is not None and proc.poll() is None:
+            self._signal(proc, signal.SIGKILL if force else signal.SIGTERM)
+        return True
+
+    @staticmethod
+    def _signal(proc, sig):
+        """To the whole group: SIGTERM is a request, SIGKILL is not."""
+        try:
+            os.killpg(os.getpgid(proc.pid), sig)
+        except (OSError, ProcessLookupError):
+            try:
+                proc.send_signal(sig)
+            except (OSError, ProcessLookupError):
+                pass
+
+    @property
+    def stopped(self):
+        """Finished because it was asked to, rather than on its own."""
+        return not self.running and self._stopping
 
     def as_dict(self):
-        return {"id": self.id, "step": self.step_id, "running": self.running,
-                "write": self.write, "returncode": self.returncode,
-                "command": self.command(), "started": self.started,
+        return {"id": self.id, "step": self.step_id, "label": self.label,
+                "chain": self.chain_id, "index": self.index, "total": self.total,
+                "steps": [sid for sid, _ in self.plan],
+                "running": self.running, "write": self.write,
+                "returncode": self.returncode, "command": self.command(),
+                "stopping": self._stopping, "stopped": self.stopped,
+                "forced": self._forced, "started": self.started,
                 "elapsed": round((self.finished or time.time()) - self.started, 1),
                 "lines": len(self.lines)}
+
+
+def _pretty(argv):
+    return " ".join(["python3" if a == sys.executable else a for a in argv])
 
 
 class Runner:
@@ -276,11 +391,19 @@ class Runner:
         self.current = None
 
     def start(self, step_id, params, write=False):
+        if step_id not in BY_ID:
+            raise BadRequest("paso desconocido: %s" % step_id)
         argv = build_argv(step_id, params, write)
+        return self._launch(Job([(step_id, argv)], write=write))
+
+    def start_chain(self, chain_id, params_by_step):
+        chain, plan = build_chain(chain_id, params_by_step)
+        return self._launch(Job(plan, label=chain["label"], chain_id=chain["id"]))
+
+    def _launch(self, job):
         with self._lock:
             if self.current is not None and self.current.running:
-                raise BadRequest("ya hay un paso en marcha: %s" % self.current.step_id)
-            job = Job(step_id, argv, write)
+                raise BadRequest("ya hay algo en marcha: %s" % self.current.label)
             self.jobs[job.id] = job
             self.current = job
         job.start()
