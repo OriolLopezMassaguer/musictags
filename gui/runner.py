@@ -269,12 +269,6 @@ class Job:
 
     def start(self):
         os.makedirs(LOG_DIR, exist_ok=True)
-        self._emit("$ " + self.command())
-        self._proc = subprocess.Popen(
-            self.argv, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1, encoding="utf-8", errors="replace",
-            # UTF-8 both ways: on Windows the pipe defaults to cp1252 and crashes on e.g. Cyrillic tags.
-            env=dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8", PYTHONUTF8="1"))
         threading.Thread(target=self._pump, daemon=True).start()
 
     # -- the chain ---------------------------------------------------------
@@ -308,10 +302,11 @@ class Job:
         self._write(fh, "$ " + _pretty(argv))
         proc = subprocess.Popen(
             argv, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1, errors="replace",
+            # UTF-8 both ways: on Windows the pipe defaults to cp1252 and crashes on e.g. Cyrillic tags.
+            text=True, bufsize=1, encoding="utf-8", errors="replace",
             # its own process group, so a stop reaches any grandchild too
             start_new_session=True,
-            env=dict(os.environ, PYTHONUNBUFFERED="1"))
+            env=dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8", PYTHONUTF8="1"))
         with self._cond:
             self._proc = proc
         if self._stopping:                  # pressed between two steps
@@ -347,7 +342,7 @@ class Job:
             self._forced = self._forced or force
             proc = self._proc
         if proc is not None and proc.poll() is None:
-            self._signal(proc, signal.SIGKILL if force else signal.SIGTERM)
+            self._signal(proc, getattr(signal, "SIGKILL", signal.SIGTERM) if force else signal.SIGTERM)
         return True
 
     @staticmethod
@@ -355,7 +350,7 @@ class Job:
         """To the whole group: SIGTERM is a request, SIGKILL is not."""
         try:
             os.killpg(os.getpgid(proc.pid), sig)
-        except (OSError, ProcessLookupError):
+        except (AttributeError, OSError, ProcessLookupError):   # no process groups on Windows
             try:
                 proc.send_signal(sig)
             except (OSError, ProcessLookupError):
