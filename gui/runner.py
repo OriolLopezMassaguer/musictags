@@ -224,8 +224,9 @@ class Job:
         self._emit("$ " + self.command())
         self._proc = subprocess.Popen(
             self.argv, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1, errors="replace",
-            env=dict(os.environ, PYTHONUNBUFFERED="1"))
+            text=True, bufsize=1, encoding="utf-8", errors="replace",
+            # UTF-8 both ways: on Windows the pipe defaults to cp1252 and crashes on e.g. Cyrillic tags.
+            env=dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8", PYTHONUTF8="1"))
         threading.Thread(target=self._pump, daemon=True).start()
 
     def _pump(self):

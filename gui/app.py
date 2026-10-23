@@ -335,8 +335,11 @@ def stream(job_id):
     if job is None:
         abort(404)
 
+    # Read the query string here: the generator runs after the request context is gone.
+    start = max(0, request.args.get("from", 0, type=int))
+
     def gen():
-        sent = max(0, int(request.args.get("from", 0)))
+        sent = start
         while True:
             lines, sent, running = job.follow(sent, timeout=1.0)
             for line in lines:

@@ -20,7 +20,9 @@
   </nav>
 </header>
 
+<div id="upper">
 <main>{% block body %}{% endblock %}</main>
+</div>
 
 <div id="drawer" {% if current_job %}data-job="{{ current_job.id }}"
      data-running="{{ '1' if current_job.running else '0' }}"{% endif %}>
@@ -29,7 +31,6 @@
     <span class="label">{% if current_job %}{{ current_job.step }}{% else %}Registro de ejecución{% endif %}</span>
     <span class="right"></span>
     <button class="tiny danger stop" {{ '' if current_job and current_job.running else 'hidden' }}>Parar</button>
-    <span class="muted small">pulsa para abrir/cerrar</span>
   </div>
   <pre></pre>
 </div>

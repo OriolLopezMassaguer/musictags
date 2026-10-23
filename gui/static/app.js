@@ -27,7 +27,7 @@ const el = (tag, attrs = {}, kids = []) => {
 function toast(msg, kind = 'ok') {
   const t = el('div', { class: `note ${kind}`, text: msg });
   Object.assign(t.style, {
-    position: 'fixed', right: '16px', bottom: '58px', zIndex: 60,
+    position: 'fixed', right: '16px', top: '60px', zIndex: 60,
     maxWidth: '380px', boxShadow: '0 4px 18px rgba(0,0,0,.18)',
   });
   document.body.append(t);
@@ -45,27 +45,37 @@ const Drawer = {
     this.pre = this.node.querySelector('pre');
     this.label = this.node.querySelector('.label');
     this.dot = this.node.querySelector('.dot');
-    this.node.querySelector('.bar').addEventListener('click', (e) => {
-      if (e.target.closest('button')) return;
-      this.node.classList.toggle('open');
-    });
     const stop = this.node.querySelector('.stop');
     if (stop) stop.addEventListener('click', () => api.post('/api/job/stop'));
-    if (this.node.dataset.job) this.attach(this.node.dataset.job, this.node.dataset.running === '1');
+    if (this.node.dataset.job) {
+      this.attach(this.node.dataset.job, this.node.dataset.running === '1', false);
+    }
   },
 
-  open() { this.node.classList.add('open'); },
+  // The log is cached per tab so a page change repaints it at once instead of blanking.
+  cached(jobId) {
+    try { const c = JSON.parse(sessionStorage.getItem('drawerLog')); return c && c.id === jobId ? c.text : null; }
+    catch (e) { return null; }
+  },
+  cache(jobId) {
+    try { sessionStorage.setItem('drawerLog', JSON.stringify({ id: jobId, text: this.pre.textContent })); }
+    catch (e) { /* storage blocked or full */ }
+  },
 
-  attach(jobId, running) {
-    this.open();
-    this.pre.textContent = '';
+  // fresh=false: re-attaching after a page load. A job that already ended is only
+  // displayed, not "finished" again (no repeated toast, no onJobDone reload).
+  attach(jobId, running, fresh = true) {
+    const old = fresh ? null : this.cached(jobId);
+    this.pre.textContent = old || '';
+    if (old) this.scroll();
     if (this.source) this.source.close();
     api.get(`/api/job?id=${encodeURIComponent(jobId)}`).then((d) => {
-      this.pre.textContent = (d.lines || []).join('\n');
-      this.scroll();
+      const text = (d.lines || []).join('\n');
+      if (text !== this.pre.textContent) { this.pre.textContent = text; this.scroll(); }
+      this.cache(jobId);
       this.status(d.job, d.running);
       if (running || d.running) this.follow(jobId, d.next || 0);
-      else this.finish(d.job);
+      else if (fresh) this.finish(d.job);
     });
   },
 
@@ -74,6 +84,7 @@ const Drawer = {
     this.source.onmessage = (e) => {
       this.pre.textContent += (this.pre.textContent ? '\n' : '') + JSON.parse(e.data);
       this.scroll();
+      this.cache(jobId);
     };
     this.source.addEventListener('done', (e) => {
       this.source.close();

@@ -425,8 +425,11 @@ class SchemaFile:
         path = path or self.path
         text = self.dumps()
         if validate:
-            import tomli
-            tomli.loads(text)                     # raises before anything is written
+            try:
+                import tomllib                    # Python 3.11+
+            except ModuleNotFoundError:
+                import tomli as tomllib           # pip install tomli
+            tomllib.loads(text)                   # raises before anything is written
         if backup and os.path.exists(path):
             shutil.copy2(path, path + ".bak")
         tmp = path + ".tmp"

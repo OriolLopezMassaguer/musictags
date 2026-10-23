@@ -1,12 +1,4 @@
 __pycache__/
 *.pyc
-tags.sqlite
-tags.csv
-report.md
-schema.toml
-schema.proposed.toml
-changes.csv
-undo_*.jsonl
-*.bak
 gui/logs/
 gui.log

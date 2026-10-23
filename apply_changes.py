@@ -93,6 +93,10 @@ def run(plan, apply, force, id3_version, log_path, db_path):
 
 
 def main():
+    # Windows consoles default to cp1252/cp850 and choke on e.g. Cyrillic tags; never crash on output.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("csv", nargs="?", help="changes.csv from propose_changes.py")
     ap.add_argument("--apply", action="store_true", help="really write (default is a dry run)")
