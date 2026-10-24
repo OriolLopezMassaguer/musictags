@@ -13,3 +13,4 @@ schema.toml
 schema.toml.bak
 tags.csv
 tags.sqlite
+undo*

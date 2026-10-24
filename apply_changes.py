@@ -6,7 +6,8 @@ Step 4 - apply_changes.py: write the approved changes to the files (with undo).
     python apply_changes.py changes.csv --apply         # writes tags, creates undo_<time>.jsonl
     python apply_changes.py --undo undo_20261020_1400.jsonl --apply   # restore previous values
 
-Only rows with approve = y/yes/x/1 are applied. Before writing, each file is re-read:
+Only rows with approve = y/yes/x/1 are applied (--all applies every row, approved or not,
+including the low-confidence ones). Before writing, each file is re-read:
 if a field no longer has the 'old' value of the CSV (the file changed after the scan),
 that change is skipped (use --force to override).
 
@@ -115,6 +116,7 @@ def main():
     ap.add_argument("csv", nargs="?", help="changes.csv from propose_changes.py")
     ap.add_argument("--apply", action="store_true", help="really write (default is a dry run)")
     ap.add_argument("--undo", metavar="LOG", help="restore values from an undo_*.jsonl log")
+    ap.add_argument("--all", action="store_true", help="apply every row of the CSV, whatever its approve column says")
     ap.add_argument("--force", action="store_true", help="write even if the file changed since the scan")
     ap.add_argument("--schema", default="schema.toml", help="for the id3_version setting")
     ap.add_argument("--db", default="tags.sqlite", help="cache to refresh after writing")
@@ -138,7 +140,7 @@ def main():
     elif args.csv:
         with open(args.csv, newline="", encoding="utf-8-sig") as fh:
             for r in csv.DictReader(fh):
-                if r["approve"].strip().lower() in YES:
+                if args.all or r["approve"].strip().lower() in YES:
                     plan[r["path"]].append((r["field"], split_list(r["old"]), split_list(r["new"])))
         log_path = f"undo_{stamp}.jsonl"
     else:

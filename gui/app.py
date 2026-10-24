@@ -317,6 +317,11 @@ def api_run(step_id):
 def api_run_chain(chain_id):
     """Run several steps back to back. Each step takes its own form's values."""
     body = request.get_json(silent=True) or {}
+    chain = next((c for c in CHAINS if c["id"] == chain_id), None)
+    if chain is None:
+        abort(404)
+    if chain.get("write") and body.get("confirm") != "APLICAR":
+        return jsonify(ok=False, error="Escribir en los ficheros necesita confirmación."), 400
     try:
         job = RUNNER.start_chain(chain_id, body.get("params") or {})
     except BadRequest as exc:

@@ -46,8 +46,8 @@ const Drawer = {
     this.pre = this.node.querySelector('pre');
     this.label = this.node.querySelector('.label');
     this.dot = this.node.querySelector('.dot');
-    const stop = this.node.querySelector('.stop');
-    if (stop) stop.addEventListener('click', () => api.post('/api/job/stop'));
+    this.stopBtn = this.node.querySelector('.stop');
+    if (this.stopBtn) this.stopBtn.addEventListener('click', () => this.stop());
     if (this.node.dataset.job) {
       this.attach(this.node.dataset.job, this.node.dataset.running === '1', false);
     }
@@ -78,11 +78,14 @@ const Drawer = {
     toast(force ? 'Proceso matado.' : 'Parando en el siguiente punto seguro…', 'warn');
   },
 
-  attach(jobId, running) {
-    this.open();
+  // fresh=false: re-attaching after a page load. A job that already ended is only
+  // displayed, not "finished" again (no repeated toast, no onJobDone reload).
+  attach(jobId, running, fresh = true) {
     this.asked = false;
     if (this.stopBtn) this.stopBtn.textContent = 'Parar';
-    this.pre.textContent = '';
+    const old = fresh ? null : this.cached(jobId);
+    this.pre.textContent = old || '';
+    if (old) this.scroll();
     if (this.source) this.source.close();
     api.get(`/api/job?id=${encodeURIComponent(jobId)}`).then((d) => {
       const text = (d.lines || []).join('\n');
@@ -181,7 +184,10 @@ function allStepParams() {
 }
 
 async function runChain(chainId) {
-  const d = await api.post(`/api/run-chain/${chainId}`, { params: allStepParams() });
+  if (!confirm(
+    'Se ejecutan todos los pasos y el último ESCRIBE los tags en los ficheros de música.\n\n'
+    + 'Se guarda un registro undo_*.jsonl antes de tocar nada.\n\n¿Seguir?')) return;
+  const d = await api.post(`/api/run-chain/${chainId}`, { params: allStepParams(), confirm: 'APLICAR' });
   if (!d.ok) { toast(d.error || 'No se ha podido lanzar.', 'bad'); return; }
   Drawer.attach(d.job.id, true);
 }

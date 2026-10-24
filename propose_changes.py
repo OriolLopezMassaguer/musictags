@@ -27,7 +27,7 @@ from collections import Counter, defaultdict
 from core import (EXIT_INTERRUPTED, LIST_SEP, TAXONOMY, WRITABLE, Interrupted, band_sort,
                   check_stop, composer_aliases, composer_period, genre_key, handle_interrupts,
                   load_config, name_key, nice_case, person_sort)
-from rules import DEFAULT_FEAT, DEFAULT_SPLIT, Canon, CreditSplitter, dedupe
+from rules import DEFAULT_FEAT, DEFAULT_SPLIT, Canon, CreditSplitter, dedupe, strip_credits
 from album_names import (OrchestraCodes, build_name, classify, composer_text, performers_text,
                          short_work, summarize_works, work_of_title)
 from classical_genres import Tree, extract_concepts, swap_classical, tree_status
@@ -100,13 +100,23 @@ class Proposer:
         cur = lambda f: t.get(f, [])
 
         # ---- artists ----
+        # iTunes credit soup ("A, Main Artist, Cello - B, Composer"): keep performers, move composers out
+        comps = dedupe(self.canon(x) for v in cur("composer") for x in self.csplit.split_list(v))
         main, feat, split_used = [], [], False
         for v in cur("artist"):
+            v, soup_comps = strip_credits(v)
+            comps = dedupe(comps + [self.canon(x) for x in soup_comps])
             m, f = self.split.split(v)
             split_used |= len(m) > 1
             main += m; feat += f
         main = dedupe(self.canon(x) for x in main)
         feat = [x for x in dedupe(self.canon(x) for x in feat) if name_key(x) not in {name_key(m) for m in main}]
+        # the composer is not a performer; never empty the list (artist == composer is inferred below)
+        comp_keys = {name_key(x) for x in comps}
+        is_comp = lambda x: name_key(x) in comp_keys
+        if any(not is_comp(x) for x in main):
+            main = [x for x in main if not is_comp(x)]
+            feat = [x for x in feat if not is_comp(x)]
         title_feat = []
         if self.a.get("feat_from_title", True):
             title_feat = [self.canon(x) for x in self.split.title_feat((cur("title") or [""])[0])]
@@ -127,7 +137,6 @@ class Proposer:
                     out["artistsort"] = ([s0 + disp[len(main[0]):]], "medium", "artistsort: from canonical name")
 
         # ---- composers ----
-        comps = dedupe(self.canon(x) for v in cur("composer") for x in self.csplit.split_list(v))
         comp_rule, comp_conf = "composer: canonical names, one value each", "high"
         title = (cur("title") or [""])[0]
         if not comps and self.c.get("infer_from_title", True):
@@ -456,15 +465,20 @@ def main():
         base = os.path.abspath(args.path)
         rows = [r for r in rows if r[0].startswith(base)]
 
+    print(f"reading {len(rows)} tracks from {args.db} ...", flush=True)
     tracks = []
-    for path, tags in rows:
+    for i, (path, tags) in enumerate(rows, 1):
         check_stop()
+        if i % 2000 == 0:
+            print(f"  tracks {i}/{len(rows)}", flush=True)
         t = json.loads(tags)
         p, main_artists = prop.track(t)
         tracks.append((path, t, p, main_artists))
+    print("albums, album names, classical genres ...", flush=True)
     prop.albums(tracks)
     prop.album_names(tracks)
     prop.classical_genres(tracks)
+    print(f"writing {args.out} ...", flush=True)
 
     stats, conf_stats, n = Counter(), Counter(), 0
     part = args.out + ".part"

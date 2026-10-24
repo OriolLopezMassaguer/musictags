@@ -97,6 +97,9 @@ STEPS = [
             {"name": "limit", "type": "int", "default": 0, "flag": "--limit",
              "label": "Solo los primeros N ficheros", "min": 0, "max": 100000,
              "help": "0 = sin límite. Útil para una primera prueba."},
+            {"name": "all", "type": "bool", "default": False, "flag": "--all",
+             "label": "Aplicar todas las filas, aprobadas o no",
+             "help": "Ignora la columna approve de changes.csv, también las de confianza baja."},
             {"name": "force", "type": "bool", "default": False, "flag": "--force",
              "label": "Escribir aunque el fichero haya cambiado desde el escaneo",
              "help": "Normalmente esas filas se saltan, que es lo prudente."},
@@ -117,17 +120,17 @@ STEPS = [
 
 BY_ID = {s["id"]: s for s in STEPS}
 
-# Running several steps back to back. Step 4 is included as a dry run only:
-# writing to the music files stays a separate, explicitly confirmed action.
+# Running several steps back to back. A chain with "write" runs step 4 for real (--apply);
+# the API only starts it with the same explicit confirmation as the single Aplicar button.
 CHAINS = [
     {
         "id": "all", "label": "Todo seguido", "sh": "./0_all.sh",
         "steps": ["scan", "analyze", "propose", "apply"],
-        "desc": "Escanear, analizar, proponer y simular la aplicación, uno detrás de "
-                "otro, con las opciones de cada paso de abajo. Se detiene en cuanto "
-                "uno falla.",
-        "note": "El paso 4 va en simulación: no escribe nada en tus ficheros. "
-                "Aplicar de verdad sigue siendo un botón aparte, con confirmación.",
+        "write": True,
+        "desc": "Escanear, analizar, proponer y aplicar, uno detrás de otro, con las "
+                "opciones de cada paso de abajo. Se detiene en cuanto uno falla.",
+        "note": "El paso 4 escribe los tags en tus ficheros de verdad (con registro "
+                "undo_*.jsonl para deshacer). Pide confirmación antes de empezar.",
     },
 ]
 BY_CHAIN = {c["id"]: c for c in CHAINS}
@@ -229,7 +232,9 @@ def build_chain(chain_id, params_by_step):
     if chain is None:
         raise BadRequest("cadena desconocida: %s" % chain_id)
     params_by_step = params_by_step or {}
-    return chain, [(sid, build_argv(sid, params_by_step.get(sid) or {}))
+    write = bool(chain.get("write"))
+    return chain, [(sid, build_argv(sid, params_by_step.get(sid) or {},
+                                    write and BY_ID[sid].get("writes", False)))
                    for sid in chain["steps"]]
 
 
@@ -393,7 +398,8 @@ class Runner:
 
     def start_chain(self, chain_id, params_by_step):
         chain, plan = build_chain(chain_id, params_by_step)
-        return self._launch(Job(plan, label=chain["label"], chain_id=chain["id"]))
+        return self._launch(Job(plan, write=bool(chain.get("write")),
+                                label=chain["label"], chain_id=chain["id"]))
 
     def _launch(self, job):
         with self._lock:

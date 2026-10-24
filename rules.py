@@ -75,6 +75,37 @@ class CreditSplitter:
         return self.split_list(m.group(1)) if m else []
 
 
+# iTunes/Apple "credit soup": "Name, Main Artist, Associated Performer, Cello - Name2, Composer"
+CREDIT_ROLES = {"main artist", "associated performer", "featured artist", "primary artist", "performer",
+                "composer", "lyricist", "conductor", "arranger", "producer", "engineer", "mixer"}
+_CREDIT_TOKEN = re.compile(r",\s*|\s+&\s+")
+_CREDIT_DETECT = re.compile(r",\s*|\s+[&-]\s+")
+
+
+def strip_credits(value: str) -> tuple[str, list[str]]:
+    """Clean a credit-soup string. Returns (performers joined by ', ', composers).
+
+    The format is segments joined by ' - ': 'Name, Role, Role, Instrument' where the first token
+    of a segment is the name and the rest are roles/instruments. A name whose roles include
+    Composer (or Lyricist) is not a performer. Strings with no role word come back untouched."""
+    if not value or not any(t.strip().lower() in CREDIT_ROLES for t in _CREDIT_DETECT.split(value)):
+        return value, []
+    performers, composers = [], []
+    segs = re.split(r"\s+-\s+", value)
+    for n, seg in enumerate(segs):
+        toks = [t.strip() for t in _CREDIT_TOKEN.split(seg) if t.strip()]
+        if not toks or toks[0].lower() in CREDIT_ROLES:
+            continue
+        roles = {t.lower() for t in toks[1:]}
+        if n == len(segs) - 1 and composers and not roles & CREDIT_ROLES:
+            continue                                 # trailing role-less credit after the composer: a publisher
+        if "composer" in roles:
+            composers.append(toks[0])
+        elif "lyricist" not in roles:
+            performers.append(toks[0])
+    return ", ".join(performers), composers
+
+
 class Canon:
     """Maps any spelling of a name to its canonical form via an alias table keyed on name_key()."""
 

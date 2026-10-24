@@ -364,7 +364,7 @@ def main():
         ": one per album, by vote of its works (SCHEMA.md, 'Classical genre tree')",
         "enabled = true",
         'existing = "recalc"           # "recalc" | "keep"  (recalc: always recompute; keep: trust a path already in the file)',
-        'no_match = "root"             # "root" | "keep"  (root: tag the album with the root only; keep: leave GENRE alone)',
+        'no_match = "varios"           # "root" | "varios" | "keep"  (varios: the Varios child of the root; root: the bare root; keep: leave GENRE alone)',
         "majority = 0.6               # the winning node needs this share of the album's works, else Varios / Otros",
         "min_coverage = 0.5           # and at least this share of the works must match some rule",
         "",

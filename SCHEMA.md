@@ -99,7 +99,7 @@ GENRE = Clásica\Varios                     (a disc with a concerto and a sympho
   once (the same work on ten tracks is one vote); the winning node needs `majority` (default 60 %) of the
   works, and at least `min_coverage` (50 %) of the works must match some rule. Otherwise the album goes to
   the lowest common ancestor: its `Varios` child, else `Otros`, else the ancestor itself. With no match at
-  all: the root (`no_match = "root"`) or leave `GENRE` alone (`"keep"`).
+  all: the root's `Varios` child (`no_match = "varios"`), the bare root (`"root"`) or leave `GENRE` alone (`"keep"`).
 - **Rules** are in `[classical_rules]`: `"full path" = [rule, ...]`. A rule is concepts joined by `+`; the
   list is an OR; `[]` is a node that only receives albums by vote (`Varios`, the root).
   The node with the most `+` terms wins, then file order. Concepts:

@@ -201,7 +201,7 @@ Result = namedtuple("Result", "path conf was")            # what to write for an
 
 DEFAULTS = {"enabled": True, "existing": "recalc", "no_match": "root",
             "majority": 0.6, "min_coverage": 0.5}
-ENUMS = {"existing": ("recalc", "keep"), "no_match": ("root", "keep")}
+ENUMS = {"existing": ("recalc", "keep"), "no_match": ("root", "varios", "keep")}
 FALLBACK_CHILDREN = ("varios", "otros", "various", "others", "other")
 
 
@@ -368,6 +368,14 @@ class Tree:
             lca = SEP.join(lca.split(SEP)[:-1])
         return self.keys.get(lca)
 
+    def _varios(self):
+        """The root's Varios / Otros child (else the root itself)."""
+        rk = path_key(self.root)
+        for child in FALLBACK_CHILDREN:
+            if rk + SEP + child in self.keys:
+                return self.keys[rk + SEP + child]
+        return self.root
+
     def album_decision(self, works, fallback=None):
         """works: {work key: Concepts}. fallback: Concepts of the album text, tried only when the
         works alone decide nothing (no rule matched, or too few works matched)."""
@@ -387,7 +395,12 @@ class Tree:
         if self.opts["existing"] == "keep" and SEP in pk:
             return None                                      # a real path is there: keep it
         if decision is None:
-            if prior or self.opts["no_match"] != "root":
+            mode = self.opts["no_match"]
+            if mode == "varios":                             # never leave an album on the bare root
+                if prior and SEP in pk:
+                    return Result(self.keys[pk], "high", None) if pk in self.keys and prior != self.keys[pk] else None
+                return Result(self._varios(), "low", None)
+            if prior or mode != "root":
                 return None
             return Result(self.root, "low", None)
         new, nk = decision.path, path_key(decision.path)
