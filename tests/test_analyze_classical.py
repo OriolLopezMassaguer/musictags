@@ -94,7 +94,7 @@ class Analyze(unittest.TestCase):
     def test_options_use_the_dropdown_comment_shape(self):
         _, _, raw = self.analyze(self.yours())
         self.assertIn('existing = "recalc"           # "recalc" | "keep"', raw)
-        self.assertIn('no_match = "root"             # "root" | "keep"', raw)
+        self.assertIn('no_match = "varios"           # "root" | "varios" | "keep"', raw)
 
     def test_section_order(self):
         _, _, raw = self.analyze(self.yours())

@@ -8,8 +8,8 @@
 |---|---|---|
 | `core.py` | ~475 | The canonical field set and its per-format mapping; `read_tags`/`write_tags` over mutagen; name, genre and sort normalisation; ~190 built-in classical composers with periods and spelling variants; the genre keyword taxonomy. |
 | `rules.py` | ~102 | `CreditSplitter` (split `A & B feat. C`, honouring names that must stay whole), `Canon` (alias lookup), the default separator / feat / keep-together constants. |
-| `classical_genres.py` | ~515 | The classical genre tree, with no dependencies (`re`, `unicodedata`, `collections`): path keys, the work extractor (`extract_concepts`), `Tree` (rules, per-album vote, guards on the path a track already has), the built-in `STANDARD_TREE`, and `compare()` for the analyzer's your-tree-vs-standard report. |
-| `album_names.py` | ~313 | Classical album naming: performer role classification (ensemble / conductor / soloist), 4-letter orchestra codes, work summarising and grouping, `build_name`. |
+| `classical_genres.py` | ~544 | The classical genre tree, with no dependencies (`re`, `unicodedata`, `collections`): path keys, the work extractor (`extract_concepts`), `Tree` (rules, per-album vote, guards on the path a track already has), the built-in `STANDARD_TREE`, and `compare()` for the analyzer's your-tree-vs-standard report. |
+| `album_names.py` | ~436 | Classical album naming: performer role classification (ensemble / conductor / soloist), 4-letter orchestra codes, work summarising and grouping, `build_name`; `is_placeholder` (a title that is only numbering, `Pista01`) and `work_of_text` (the work read from the folder or the album tag when the titles say nothing). |
 
 ### Steps
 
@@ -40,7 +40,7 @@ pipeline module.
 
 | | |
 |---|---|
-| `tests/` | Pipeline-side: `test_classical_genres.py` (pure), `test_propose_classical.py` (proposer and `main()` on made-up albums, including a "apply everything, propose again, expect nothing" idempotence check), `test_analyze_classical.py` (analyzer on a temporary sqlite). `mutagen_stub.py` stands in for mutagen when it is not installed; no test touches a music file. |
+| `tests/` | Pipeline-side: `test_classical_genres.py` (pure), `test_propose_classical.py` (proposer and `main()` on made-up albums, including a "apply everything, propose again, expect nothing" idempotence check), `test_album_names.py` (placeholder titles, the work read from the folder, genre-path spelling; builds its schema in code), `test_analyze_classical.py` (analyzer on a temporary sqlite). `mutagen_stub.py` stands in for mutagen when it is not installed; no test touches a music file. |
 | `gui/tests/` | Schema editor, merge, `changes.csv`, and the schema page through Flask's test client. |
 
 `python3 -m unittest discover tests -t .` and `python3 -m unittest discover gui/tests -t .`

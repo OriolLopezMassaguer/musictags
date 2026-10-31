@@ -343,8 +343,27 @@ class Resolve(unittest.TestCase):
         r = t.resolve(self.dec, Counter({"Clásica": 1}))
         self.assertEqual(r.path, self.sym)
 
+    def test_a_kept_path_is_still_given_the_schema_spelling(self):
+        # a player lists GENRE verbatim: two spellings of one node are two branches of its tree
+        t = tree(existing="keep")
+        r = t.resolve(self.dec, Counter({"Clásica\\cámara\\cuartetos": 1}))
+        self.assertEqual((r.path, r.conf), ("Clásica\\Cámara\\Cuartetos", "high"))
+        self.assertTrue(r.how)
+
+    def test_a_more_specific_prior_is_respelled_too(self):
+        dec = cg.Decision("Clásica", "low", "common", 1, 2)
+        r = self.t.resolve(dec, Counter({"CLASICA\\Camara\\Cuartetos": 2}))
+        self.assertEqual((r.path, r.conf), ("Clásica\\Cámara\\Cuartetos", "high"))
+        self.assertIsNone(self.t.resolve(dec, Counter({"Clásica\\Cámara\\Cuartetos": 2})))
+
+    def test_a_path_the_schema_does_not_know_is_left_alone(self):
+        dec = cg.Decision("Clásica", "low", "common", 1, 2)
+        self.assertIsNone(self.t.resolve(dec, Counter({"Clásica\\Cámara\\Mandolinas": 2})))
+
     def test_no_decision(self):
         self.assertIsNone(self.t.resolve(None, Counter({"Clásica\\Cámara\\Dúos": 1})))     # a prior is kept
+        r = self.t.resolve(None, Counter({"clasica\\camara\\cuartetos": 1}))               # ... respelled
+        self.assertEqual((r.path, r.conf), ("Clásica\\Cámara\\Cuartetos", "high"))
         r = self.t.resolve(None, Counter())
         self.assertEqual((r.path, r.conf, r.was), ("Clásica", "low", None))                # no_match = root
         self.assertIsNone(tree(no_match="keep").resolve(None, Counter()))

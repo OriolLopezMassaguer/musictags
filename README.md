@@ -51,7 +51,8 @@ passed straight through to the Python script.
 ```
 ./1_scan.sh                       # 1. -> tags.sqlite, tags.csv  (--full to re-read everything)
 ./2_analyze.sh                    # 2. -> report.md, schema.proposed.toml
-                                  #    ...now merge the proposal into schema.toml
+                                  #    first run also seeds schema.toml from it;
+                                  #    later runs: merge the proposal into your schema
 ./3_propose.sh                    # 3. -> changes.csv
 ./4_apply.sh                      # 4a. dry run
 ./4_apply.sh --apply --limit 20   # 4b. try 20 files, check them in your player
@@ -75,10 +76,15 @@ The first time, read the **Classical genre tree** section of `report.md`: it lis
 `Clásica\…` genres you already have next to the built-in standard tree and says where they
 differ. *Fusionar* then brings `[classical_genres]` and `[classical_rules]` into `schema.toml`.
 
-> **Do not `cp schema.proposed.toml schema.toml`.** Step 2 regenerates the proposal from
+> **The first run creates `schema.toml` for you**, seeded from the proposal, so step 3
+> has something to read. It is the raw proposal, not a reviewed schema: most of what it
+> produces lands at `low` confidence and stays unapproved until you go through it.
+>
+> **After that, never copy the proposal over it.** Step 2 regenerates the proposal from
 > scratch every run, so copying it over discards every decision you made by hand —
-> mapped genres, orchestra codes, aliases, `keep_together`. Use the GUI's *Fusionar*
-> page, which merges the two and keeps your edits, or diff them yourself.
+> mapped genres, orchestra codes, aliases, `keep_together`. An existing `schema.toml` is
+> therefore never touched by step 2. Use the GUI's *Fusionar* page, which merges the two
+> and keeps your edits, or diff them yourself.
 
 ## Stopping a run
 

@@ -96,7 +96,9 @@ GENRE = Clásica\Varios                     (a disc with a concerto and a sympho
 ```
 
 - **One path per album**, not per track, so the album does not scatter across the tree. Every work votes
-  once (the same work on ten tracks is one vote); the winning node needs `majority` (default 60 %) of the
+  once (the same work on ten tracks is one vote), except a track whose title is only numbering
+  (`Pista01`): it names no work, so it does not vote and the album text decides instead.
+  The winning node needs `majority` (default 60 %) of the
   works, and at least `min_coverage` (50 %) of the works must match some rule. Otherwise the album goes to
   the lowest common ancestor: its `Varios` child, else `Otros`, else the ancestor itself. With no match at
   all: the root's `Varios` child (`no_match = "varios"`), the bare root (`"root"`) or leave `GENRE` alone (`"keep"`).
@@ -117,8 +119,12 @@ GENRE = Clásica\Varios                     (a disc with a concerto and a sympho
   stays; they conflict → the new path with `low` confidence and `was <yours>` in the rule text.
   A path that is not in the tree at all (`Clásica\Cámara\Dúos` that you made up) is kept unless a rule
   matches. `existing = "keep"` trusts any path already in the file; the default `"recalc"` recomputes.
-- **Confidence is never `high`.** `medium` (pre-approved) only for a unanimous album whose works are
-  at least 80 % matched; majorities, album-title fallbacks, `Varios`/`Otros` and the root are `low`.
+- **A kept path is still written in the schema's spelling** (`Clásica\cámara\piano Solo` →
+  `Clásica\Cámara\Piano Solo`), with `high` confidence, and the node itself never changes. A player
+  lists GENRE verbatim, so two spellings of one node are two branches of its tree.
+- **Confidence is never `high`** except for that spelling fix. `medium` (pre-approved) only for a
+  unanimous album whose works are at least 80 % matched; majorities, album-title fallbacks,
+  `Varios`/`Otros` and the root are `low`.
   Rule text: `genre-tree: Clásica\Orquestal\Sinfonias (3 of 3 works)`; filter the *Cambios* page by
   the `genre-tree` rule to review them.
 - **Idempotent.** The path is a function of the works, composers and periods, so running the proposal
@@ -157,6 +163,15 @@ Debussy, Satie, Albéniz - Clair de lune, Gymnopédie No. 1 & Asturias (Alexis W
   `El amor brujo: Danza…`. Keys (`in C minor`, `en re menor`, `Es-Dur`) are dropped; the catalogue
   number is kept when there is a single work. Same type → grouped: `Symphonies Nos. 5 & 7`,
   `Cello Suites Nos. 1–6`. More than 3 → `A, B, etc.`
+- **Titles that name nothing** — `Pista01`, `Track 02`, `Spur 3`, `1-04`, `07`, `Untitled`, what a ripper
+  writes when the CD had no metadata — are never used as works. When most of an album's titles are like
+  that, the work is read from the folder name, else from the ALBUM tag:
+  `…\Fricsay\Don Giovanni 1\Pista01.mp3` → `Mozart - Don Giovanni 1 (Fricsay)`. The composer and the
+  performers are dropped from that text, because the name prints them anyway (`Mozart_ Requiem Solti` →
+  `Requiem`), and so is a disc marker at the end (`… v4`, `… CD 2`, `… Vol. 3`), which is then used to
+  tell the discs of a set apart. A bare number at the end stays: `Symphony 40` is a name, not a disc.
+  The same text is proposed as WORK as well, with `low` confidence. Titles that do name a work are kept
+  beside it. If neither the folder nor the album tag says anything either, the album is left alone.
 - **Performers**: each credit (ARTIST/ARTISTS, CONDUCTOR, ENSEMBLE) is classified:
   - *orchestra/ensemble* — name contains Orchestra, Orquesta, Orquestra, Philharmoni*, Symphon*,
     Sinfon*, Ensemble, Quartet, Choir/Coro/Cor, Kammer, Chamber, Academy, Consort, Kapelle… →
@@ -166,7 +181,9 @@ Debussy, Satie, Albéniz - Clair de lune, Gymnopédie No. 1 & Asturias (Alexis W
   - *soloist* — everyone else (`(piano)`, `(cello)` annotations are stripped).
   Only performers on ≥ 50 % of the album's tracks are named; composers are never listed as performers.
 - Detected conductors and orchestras are also written to CONDUCTOR / ENSEMBLE.
-- Two different albums that would get the same name are told apart by year (`[1962]`, `[1977]`),
-  else by the old album name. CD1/CD2 sub-folders are treated as one album.
+- Two different albums that would get the same name are told apart by the disc number their folder
+  carried (`[1]`, `[2]`), else by year (`[1962]`, `[1977]`), else by the suffix an earlier run added,
+  else by the old album name — a long one is not used, so a generated name never ends up nested inside
+  the next one. CD1/CD2 sub-folders are treated as one album.
 - Confidence *medium* (pre-approved) when composer and works were found in the tags/titles;
   *low* when works are just the track titles or the composer was guessed.

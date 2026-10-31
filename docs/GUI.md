@@ -135,9 +135,11 @@ The state of the whole thing in one screen.
 
 ### Fusionar
 
-Replaces `cp schema.proposed.toml schema.toml`. Step 2 rewrites the proposal from
-scratch every run, so copying it over your schema throws away everything you decided by
-hand. This page resolves the two files difference by difference.
+Step 2 seeds `schema.toml` from the proposal the first time, when there is nothing to
+lose, and never touches it again. This page is what you use from then on: step 2 rewrites
+the proposal from scratch every run, so copying it over your schema throws away
+everything you decided by hand. This page resolves the two files difference by
+difference.
 
 One rule decides the defaults: **the analysis knows what is in the library, you know
 what the values should be.**

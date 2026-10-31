@@ -28,8 +28,8 @@ from core import (EXIT_INTERRUPTED, LIST_SEP, TAXONOMY, WRITABLE, Interrupted, b
                   check_stop, composer_aliases, composer_period, genre_key, handle_interrupts,
                   load_config, name_key, nice_case, person_sort)
 from rules import DEFAULT_FEAT, DEFAULT_SPLIT, Canon, CreditSplitter, dedupe, strip_credits
-from album_names import (OrchestraCodes, build_name, classify, composer_text, performers_text,
-                         short_work, summarize_works, work_of_title)
+from album_names import (OrchestraCodes, build_name, classify, composer_text, is_placeholder,
+                         performers_text, short_work, summarize_works, work_of_text, work_of_title)
 from classical_genres import Tree, extract_concepts, swap_classical, tree_status
 
 DISC_DIR = re.compile(r"^(?:cd|disc|disk|disco|disque|disc\s*\d+\s*of)\s*\d+\b.*$", re.I)
@@ -288,9 +288,11 @@ class Proposer:
             works, hows, pending = [], [], []
             for i, (_, t, p, _) in enumerate(items):
                 w = eff(t, p, "work")
-                if w:
+                if w and not is_placeholder(w[0]):
                     works.append(w[0]); hows.append("tag"); continue
                 title = (t.get("title") or [""])[0]
+                if is_placeholder(title):             # 'Pista01': numbering, not a name
+                    works.append(None); hows.append("none"); continue
                 w, how = work_of_title(title, comps_by_track[i])
                 works.append(w); hows.append(how)
                 if not w:
@@ -333,6 +335,22 @@ class Proposer:
                     if tr_ens and not eff(t, p, "ensemble"):
                         p["ensemble"] = (tr_ens, "medium", "ensemble: detected in artist credits")
 
+            # most titles are placeholders ('Pista01'): the folder, then the album tag, are the
+            # only things left that can name the work
+            disc = ""
+            named = [w for w in works if w]
+            if len(named) * 2 < n:
+                work, disc = work_of_text([os.path.basename(key[0]), key[1]], list(composers),
+                                          list(sol) + list(ens) + list(con))
+                if work:
+                    for i, (_, t, p, _) in enumerate(items):
+                        if not works[i] and not eff(t, p, "work"):
+                            p["work"] = ([work], "low", "work: from the album folder (the title "
+                                                        "is a placeholder)")
+                    works, hows = [work] + named, ["album-text"] * n
+                elif not named:
+                    continue                          # nothing names this album: leave it alone
+
             name = build_name(cfg.get("format", "{composer} - {works} ({performers})"),
                               composer_text(composers, cfg, self.sort_over),
                               summarize_works(works, int(cfg.get("max_works", 3)), cfg.get("others", "etc.")),
@@ -342,9 +360,11 @@ class Proposer:
             rule = "album: classical name (composer - works - performers)"
             if guessed:
                 rule += "; composer guessed"
+            elif "album-text" in hows:
+                rule += "; placeholder titles, work from the album folder"
             elif not good:
                 rule += "; works taken from titles"
-            planned[key] = [name, "medium" if good else "low", rule, items]
+            planned[key] = [name, "medium" if good else "low", rule, items, disc]
 
         # ---- different albums must not end up with the same name ----
         by_name = defaultdict(list)
@@ -353,15 +373,22 @@ class Proposer:
         for keys in by_name.values():
             if len(keys) < 2:
                 continue
+            keys = sorted(keys)
+            discs = {k: planned[k][4] for k in keys}        # 'Cello Concertos Vol. 2' -> '2'
             years = {k: next((d[0][:4] for _, t, p, _ in planned[k][3] for d in [t.get("date", [])] if d), "")
                      for k in keys}
-            distinct_years = len(set(years.values())) == len(keys) and all(years.values())
-            for i, k in enumerate(sorted(keys)):
-                suffix = years[k] if distinct_years else (k[1] if len({kk[1] for kk in keys}) == len(keys) else str(i + 1))
-                planned[k][0] += f" [{suffix}]"
+            # a suffix we added on an earlier run, so re-running keeps the same name
+            marks = {k: _mark(k[1]) for k in keys}
+            # the album tag itself, but never a long one: that is how a generated name used to
+            # end up nested inside the next one
+            albums = {k: k[1] if len(k[1] or "") <= 40 else "" for k in keys}
+            tells = next((m for m in (discs, years, marks, albums) if _tells_apart(m, keys)),
+                         {k: str(i + 1) for i, k in enumerate(keys)})
+            for k in keys:
+                planned[k][0] += f" [{tells[k]}]"
                 planned[k][2] += "; disambiguated"
 
-        for key, (name, conf, rule, items) in planned.items():
+        for key, (name, conf, rule, items, _disc) in planned.items():
             for _, t, p, _ in items:
                 if t.get("album") != [name]:
                     p["album"] = ([name], conf, rule)
@@ -376,7 +403,7 @@ class Proposer:
         groups = defaultdict(list)
         for item in tracks:
             groups[album_key(item[0], item[1])].append(item)
-        for items in groups.values():
+        for key, items in groups.items():
             items = sorted(items, key=lambda x: x[0])
             classical = [it for it in items if "Classical" in eff(it[1], it[2], "genre")]
             if not classical:
@@ -388,27 +415,38 @@ class Proposer:
                 periods = dedupe(self.period[c] for c in comps if c in self.period)
                 title = (t.get("title") or [""])[0]
                 work = (eff(t, p, "work") or [None])[0] or work_of_title(title, comps)[0]
-                key = fold_key(short_work(work or title, keep_catalog=False))
-                works.setdefault(key, extract_concepts(work=work, title=title, composers=comps, periods=periods))
+                if work and is_placeholder(work):
+                    work = None
                 priors.update(tree.priors_in(t.get("genre", []), self.split_genre))
+                if not work and is_placeholder(title):
+                    continue                             # 'Pista01' names no work: it cannot vote
+                wkey = fold_key(short_work(work or title, keep_catalog=False))
+                works.setdefault(wkey, extract_concepts(work=work, title=title, composers=comps,
+                                                        periods=periods))
             periods = dedupe(self.period[c] for c in comps_all if c in self.period)
             album_text = (classical[0][1].get("album") or [""])[0]
-            fallback = extract_concepts(text=album_text, composers=comps_all, periods=periods)
+            fallback = extract_concepts(text=album_text + " " + os.path.basename(key[0]),
+                                        composers=comps_all, periods=periods)
             d = tree.album_decision(works, fallback)
             res = tree.resolve(d, priors)
 
             for _, t, p, _ in classical:
-                genres = list(eff(t, p, "genre"))
-                if res is None:                              # leave what the file already says
-                    own = tree.priors_in(t.get("genre", []), self.split_genre)
-                    if not own:
+                # a path is one branch of the player's tree: always in the schema's spelling
+                genres = [tree.canon(g) for g in eff(t, p, "genre")]
+                if res is None or res.how:                   # keep the path the file has, respelled
+                    own = [tree.canon(x) for x in tree.priors_in(t.get("genre", []), self.split_genre)]
+                    target = own[0] if own else (res.path if res else "")
+                    if not target:
                         continue                             # flat 'Classical': nothing to refine
-                    new = swap_classical(genres, own[0])
+                    new = swap_classical(genres, target)
                     old = p.get("genre")
                     if new == t.get("genre", []):
                         p.pop("genre", None)
+                    elif res:
+                        p["genre"] = (new, res.conf, "genre-tree: %s (%s)" % (target, res.how))
                     else:
-                        p["genre"] = (new, old[1] if old else "high", old[2] if old else "genre: kept")
+                        p["genre"] = (new, old[1] if old else "high",
+                                      old[2] if old else "genre-tree: %s (kept)" % target)
                     continue
                 if d is None:
                     how = "no rule matched, album goes to the root"
@@ -424,6 +462,17 @@ class Proposer:
 
 def fold_key(s):
     return name_key(s)
+
+
+def _mark(album_name):
+    """The suffix an earlier run added to tell two albums apart: 'X (Y) [2]' -> '2'."""
+    m = re.search(r"\[([^\[\]]+)\]\s*$", album_name or "")
+    return m.group(1) if m else ""
+
+
+def _tells_apart(values, keys):
+    """True when `values` gives every one of `keys` a different, non-empty suffix."""
+    return all(values[k] for k in keys) and len({values[k] for k in keys}) == len(keys)
 
 
 def roman_to_int(s):
@@ -461,6 +510,7 @@ def main():
 
     db = sqlite3.connect(args.db)
     rows = db.execute("SELECT path, tags FROM files WHERE error IS NULL ORDER BY path").fetchall()
+    db.close()                      # Windows will not let the file be removed while it is open
     if args.path:
         base = os.path.abspath(args.path)
         rows = [r for r in rows if r[0].startswith(base)]

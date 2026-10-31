@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from core import fold, name_key, person_sort
+from core import fold, name_key, nice_case, person_sort
 
 # --------------------------------------------------------------------------- #
 # Who is who                                                                   #
@@ -216,23 +216,148 @@ def _numbers(nums: list[int]) -> str:
     return ", ".join(parts)
 
 
-def work_of_title(title: str, composers: list[str]) -> tuple[str | None, str]:
-    """Return (work, how) from a track title, or (None, '')."""
-    t = title.strip()
+def strip_composer(text: str, composers, bare: bool = False) -> str:
+    """'Bach: Cello Suite No. 1' -> 'Cello Suite No. 1' (also 'J.S. Bach - ...'). With `bare`,
+    a composer at the head of a folder name goes too ('Mozart Requiem' -> 'Requiem'): the album
+    name prints the composer itself, so keeping it there would say it twice."""
+    t = text.strip()
     for c in composers:                               # 'Bach: ...' / 'J.S. Bach - ...'
-        for n in {c, c.split()[-1], person_sort(c).split(",")[0]}:
+        if not c.strip():
+            continue
+        for n in sorted({c, c.split()[-1], person_sort(c).split(",")[0]}, key=len, reverse=True):
             m = re.match(rf"^{re.escape(n)}\s*[:\-–]\s*(.+)$", t, re.I)
             if m:
-                t = m.group(1).strip()
-                break
+                return m.group(1).strip()
+            if bare:
+                m = re.match(rf"^{re.escape(n)}\b[\s_]+(\S.{{2,}})$", t, re.I)
+                if m:
+                    return m.group(1).strip()
+    return t
+
+
+def work_of_title(title: str, composers: list[str]) -> tuple[str | None, str]:
+    """Return (work, how) from a track title, or (None, '')."""
+    t = strip_composer(title, composers)
     m = MVT_RE.match(t)
     if m:
         return m.group("work").strip(), "movement"
     return None, ""
 
 
+# --------------------------------------------------------------------------- #
+# Titles that name nothing                                                     #
+# --------------------------------------------------------------------------- #
+# What a ripper writes when the CD had no metadata: 'Pista01', 'Track 02', '1-04',
+# 'Untitled 3'. They are numbering, not names, so they must never become a work, a WORK
+# tag or a vote in the genre tree -- the album or its folder is then all there is to go on.
+TRACK_WORD = (r"(?:pistas?|pistes?|tracks?|traccia|tracce|faixas?|spur(?:en)?|titel|t[ií]tulos?|"
+              r"audio\s*track|cdda?\s*track|audiotrack|tema|corte|nummer|st[uü]ck|trk|tr)")
+DISC_WORD = r"(?:cd|cds|disc|disco|disque|disk|dvd|vol(?:ume|umen)?|v)"
+PLACEHOLDER_TITLE = re.compile(rf"""^\s*
+    (?:{DISC_WORD}\s*\.?\s*\d{{1,2}}\s*[-_.:]?\s*)?    # optional 'CD2 - ' prefix
+    (?:
+        {TRACK_WORD}\s*[-_.#]?\s*\d{{1,3}}[a-z]?       # Pista01 / Track 2 / Spur-3
+      | \d{{1,3}}\s*[-_.]?\s*{TRACK_WORD}              # 01 Track
+      | \d{{1,3}}(?:\s*[-_.]\s*\d{{1,3}})?             # 07 / 1-04
+      | (?:un)?titled\s*\d*
+      | sin\s*t[ií]tulo\s*\d*
+      | (?:no|without)\s*(?:title|name)\s*\d*
+      | (?:unknown|desconocid[oa])(?:\s*(?:track|pista))?\s*\d*
+    )
+    \s*$""", re.I | re.X)
+DISC_ONLY = re.compile(rf"^\s*{DISC_WORD}\s*\.?\s*\d{{0,3}}\s*$", re.I)
+# an explicit disc / volume marker at the end of an album or folder name: ' CD 2', ' Vol. 3', ' v1'
+DISC_TAIL = re.compile(rf"""[\s,;:._/(\[-]+{DISC_WORD}\.?\s*
+                           (\d{{1,2}})(?:\s*(?:of|de|/)\s*\d{{1,2}})?[)\]]*\s*$""", re.I | re.X)
+
+
+def is_placeholder(title: str) -> bool:
+    """True for a title that names nothing: 'Pista01', 'Track 2', '05', 'Untitled'."""
+    return bool(title and PLACEHOLDER_TITLE.match(title))
+
+
+def _tidy(s: str) -> str:
+    s = re.sub(r"\s*[\(\[]\s*[\)\]]", " ", s)
+    return re.sub(r"\s{2,}", " ", s).strip(" ,;:-–_/.")
+
+
+def _forms(name: str):
+    """The spellings of a person to look for in a free text: full name and surname."""
+    parts = name.split()
+    return {f for f in {name, person_sort(name).split(",")[0], parts[-1] if parts else name}
+            if len(f) >= 4}                           # 'Ax', 'LSO': too short to match safely
+
+
+def _drop_names(text: str, names) -> str:
+    """Remove performer names ('Requiem Solti' -> 'Requiem'), never emptying the text."""
+    for n in names:
+        for form in _forms(n):
+            cut = re.sub(rf"(?<!\w){re.escape(form)}(?!\w)", " ", text, flags=re.I)
+            if _tidy(cut):
+                text = cut
+    return text
+
+
+def _only_names(text: str, names) -> bool:
+    """True for '(Fricsay)' / '(Karajan 1958)': nothing but performers and years."""
+    t = re.sub(r"\b(?:19|20)\d{2}\b", " ", text)
+    for n in names:
+        for form in _forms(n):
+            t = re.sub(rf"(?<!\w){re.escape(form)}(?!\w)", " ", t, flags=re.I)
+    return not _tidy(t)
+
+
+def _clean_work(text: str, composers, performers) -> tuple[str, str]:
+    """One candidate text -> (work, disc number) or ('', '')."""
+    s = strip_composer(text.strip(), composers, bare=True)
+    m = re.search(r"\s*\(([^()]*)\)\s*$", s)               # trailing '(Fricsay)' / '(1958)'
+    if m and _only_names(m.group(1), performers) and _tidy(s[:m.start()]):
+        s = _tidy(s[:m.start()])
+    # drop our own 'Pista01, Pista02, etc.' if this text was built by a previous run
+    parts = [x for x in re.split(r"\s*,\s*", s)
+             if not is_placeholder(x) and fold(x).strip(". ") not in ("etc", "")]
+    s = _tidy(", ".join(parts))
+    m = DISC_TAIL.search(s)
+    disc = m.group(1) if m else ""
+    if m and _tidy(s[:m.start()]):
+        s = _tidy(s[:m.start()])
+    s = _tidy(_drop_names(s, performers))
+    if len(s) >= 3 and not is_placeholder(s) and not DISC_ONLY.match(s):
+        return nice_case(s), disc
+    return "", ""
+
+
+def work_of_text(texts, composers=(), performers=()) -> tuple[str, str]:
+    """The work of an album whose titles say nothing, read from the folder name or the album
+    tag -- the only places left that can still name it:
+
+        'Don Giovanni 1'          -> ('Don Giovanni 1', '')
+        'Mozart_ Requiem Solti'   -> ('Requiem', '')
+        'Cello concertos Vol. 4'  -> ('Cello concertos', '4')
+
+    Returns ('', '') when none of `texts` says anything either. The second value is the disc /
+    volume number taken off the end, which album_names uses to tell the discs of a set apart.
+    A bare trailing number is left in place: 'Symphony 40' is a name, not a disc number.
+    """
+    for raw in texts:
+        if not raw or DISC_ONLY.match(raw):
+            continue
+        s = re.sub(r"_(?=\s|$)", ":", raw.strip())            # iTunes writes ':' as '_'
+        bracket = ""
+        m = re.search(r"\s*\[([^\[\]]*)\]\s*$", s)            # a name we wrote before: '... [X]'
+        if m:
+            bracket = m.group(1)                              # the last thing to try
+            s = _tidy(s[:m.start()]) or s
+        for cand in (s, bracket):
+            work, disc = _clean_work(cand, composers, performers) if cand else ("", "")
+            if work:
+                return work, disc
+    return "", ""
+
+
 def summarize_works(works: list[str], max_items: int = 3, others: str = "etc.") -> str:
-    works = [w for w in dict.fromkeys(w.strip() for w in works) if w]
+    """`works` may hold None for a track whose title named no work ('Pista01')."""
+    works = [w for w in dict.fromkeys(w.strip() for w in works if w) if w]
     if not works:
         return ""
     if len(works) == 1:

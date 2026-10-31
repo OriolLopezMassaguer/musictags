@@ -10,7 +10,8 @@ Writes:
   schema.proposed.toml   a schema/config built from YOUR tags: genre map for every genre
                          you use, alias table for every name spelled several ways, list of
                          band names that must not be split, separators to split on...
-Review/edit schema.proposed.toml, save it as schema.toml, then run propose_changes.py.
+On the first run schema.toml is seeded from the proposal so the next step can run;
+after that it is yours and is never overwritten. Review it, then run propose_changes.py.
 """
 import argparse
 import difflib
@@ -43,6 +44,7 @@ def load(db_path):
     for path, fmt, tags, err in db.execute("SELECT path, format, tags, error FROM files"):
         rows.append((path, fmt, json.loads(tags) if tags else {}, err))
     root = (db.execute("SELECT value FROM meta WHERE key='root'").fetchone() or [""])[0]
+    db.close()                      # Windows will not let the file be removed while it is open
     return rows, root
 
 
@@ -72,6 +74,10 @@ def main():
     ap.add_argument("--db", default="tags.sqlite")
     ap.add_argument("--report", default="report.md")
     ap.add_argument("--out", default="schema.proposed.toml")
+    ap.add_argument("--schema", default="schema.toml",
+                    help="the schema the later steps read; seeded from --out if missing")
+    ap.add_argument("--no-bootstrap", action="store_true",
+                    help="do not create the schema even if it is missing")
     ap.add_argument("--fuzzy", action="store_true", help="find near-duplicate names (e.g. typos)")
     ap.add_argument("--classical-root", metavar="NAME",
                     help="first level of your classical genre tree (default: the one most of your "
@@ -469,11 +475,28 @@ def main():
         T += ["# --- fuzzy matches: check and uncomment ---"]
         T += [f"# {q(a)} = {q(b)}" for a, b in fuzzy]
     T += ["", "[sort_overrides]", "# name = sort name, e.g.", '# "Prince" = "Prince"', '# "Joan Manuel Serrat" = "Serrat, Joan Manuel"', ""]
+    text = "\n".join(T)
     with open(args.out, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(T))
+        fh.write(text)
     print(f"Wrote {args.report} and {args.out}  ({n} tracks, {len(gmap)} genres mapped, "
           f"{len(unmapped)} unmapped, {len(aliases)} aliases, {len(keep)} protected names, "
           f"{len(cmp.rows)} classical genre paths)")
+
+    # First run only: with no schema.toml there are no decisions to lose, so seed it from
+    # the proposal instead of letting step 3 die on a missing file. The "x" mode is the
+    # guarantee -- an existing schema.toml is never opened for writing, because the hand
+    # edits (genre_map, orchestra codes, aliases, keep_together) live ONLY there while this
+    # proposal is rebuilt from scratch every run. Taking a later proposal into a schema you
+    # have edited is a merge, not a copy: that is gui/schema_merge.py.
+    if not args.no_bootstrap:
+        try:
+            with open(args.schema, "x", encoding="utf-8") as fh:
+                fh.write(text)
+        except FileExistsError:
+            pass                        # yours now; leave it alone
+        else:
+            print(f"Created {args.schema} from {args.out} (first run). It is the raw "
+                  f"proposal, not reviewed: read report.md and edit it before applying.")
 
 
 if __name__ == "__main__":

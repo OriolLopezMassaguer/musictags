@@ -197,7 +197,8 @@ def extract_concepts(work=None, title=None, composers=(), periods=(), text=None)
 # The tree                                                                     #
 # --------------------------------------------------------------------------- #
 Decision = namedtuple("Decision", "path conf how n m")    # how: unanimous | majority | common | album-text
-Result = namedtuple("Result", "path conf was")            # what to write for an album (was = old path)
+Result = namedtuple("Result", "path conf was how")        # what to write for an album (was = old path)
+Result.__new__.__defaults__ = (None,)                     # how: set only for a spelling fix
 
 DEFAULTS = {"enabled": True, "existing": "recalc", "no_match": "root",
             "majority": 0.6, "min_coverage": 0.5}
@@ -299,6 +300,12 @@ class Tree:
         """The tree's spelling of a genre value, or None when it is not a node."""
         return self.keys.get(path_key(raw))
 
+    def canon(self, raw: str) -> str:
+        r"""The schema's spelling of a path that is a node, else the value unchanged. A player
+        lists GENRE verbatim, so 'Clásica\cámara\piano Solo' would sit next to
+        'Clásica\Cámara\Piano Solo' as a second branch of its tree."""
+        return self.keys.get(path_key(raw), raw.strip() if isinstance(raw, str) else raw)
+
     def is_foreign(self, raw: str) -> bool:
         """A path under one of the tree's roots that the tree does not list (your own nodes)."""
         if any(c in raw for c in BAD_CHARS):                  # 'a\\b; c' is packed: split it first
@@ -387,27 +394,37 @@ class Tree:
                 return Decision(p, "low", "album-text", 1, 1)
         return d
 
+    def _respell(self, prior, pk):
+        """Keep the path the file already has, in the schema's spelling. None = nothing to do."""
+        canon = self.keys.get(pk)
+        if not canon or canon == prior:
+            return None
+        return Result(canon, "high", None, "the same node, spelled as the schema does")
+
     def resolve(self, decision, priors):
         """Decision + the album's current hierarchy paths (Counter) -> Result, or None = leave
-        the tags alone."""
+        the tags alone. Every branch that keeps the path the file already has still returns a
+        Result when the file spells that path differently from the schema."""
         prior = min(priors.items(), key=lambda kv: (-kv[1], path_key(kv[0])))[0] if priors else None
         pk = path_key(prior) if prior else ""
         if self.opts["existing"] == "keep" and SEP in pk:
-            return None                                      # a real path is there: keep it
+            return self._respell(prior, pk)                  # a real path is there: keep it
         if decision is None:
             mode = self.opts["no_match"]
             if mode == "varios":                             # never leave an album on the bare root
                 if prior and SEP in pk:
-                    return Result(self.keys[pk], "high", None) if pk in self.keys and prior != self.keys[pk] else None
+                    return self._respell(prior, pk)
                 return Result(self._varios(), "low", None)
-            if prior or mode != "root":
+            if prior:
+                return self._respell(prior, pk)
+            if mode != "root":
                 return None
             return Result(self.root, "low", None)
         new, nk = decision.path, path_key(decision.path)
         if not pk or nk == pk or is_ancestor(pk, nk):
             return Result(new, decision.conf, None)          # first path / spelling / refinement
         if is_ancestor(nk, pk):
-            return None                                      # the file already says more
+            return self._respell(prior, pk)                  # the file already says more
         return Result(new, "low", prior)                     # the tags disagree: you decide
 
 

@@ -2,7 +2,7 @@
 # Extra arguments are passed through, e.g. .\3_propose.ps1 --only genre,style
 . "$PSScriptRoot\config.ps1"
 if (-not (Test-Path schema.toml)) {
-    [Console]::Error.WriteLine("schema.toml not found: Copy-Item schema.proposed.toml schema.toml and edit it")
+    [Console]::Error.WriteLine("schema.toml not found: run .\2_analyze.ps1, which creates one")
     exit 1
 }
 & $Python propose_changes.py @args

@@ -1,5 +1,5 @@
 # Shared settings for the step scripts. Sourced, not run.
-MUSIC_DIR="d:/iTunes"
+MUSIC_DIR="e:/iTunes"
 PYTHON="${PYTHON:-python3}"
 
 cd "$(dirname "$0")" || exit 1
