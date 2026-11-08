@@ -26,7 +26,7 @@ from collections import Counter, defaultdict
 
 from core import (EXIT_INTERRUPTED, LIST_SEP, TAXONOMY, WRITABLE, Interrupted, band_sort,
                   check_stop, composer_aliases, composer_period, genre_key, handle_interrupts,
-                  load_config, name_key, nice_case, person_sort)
+                  load_config, name_key, nice_case, person_sort, cap_genre)
 from rules import DEFAULT_FEAT, DEFAULT_SPLIT, Canon, CreditSplitter, dedupe, strip_credits
 from album_names import (OrchestraCodes, build_name, classify, composer_text, is_placeholder,
                          performers_text, short_work, summarize_works, work_of_text, work_of_title)
@@ -202,8 +202,8 @@ class Proposer:
             ps = dedupe(self.period[x] for x in comps if x in self.period)
             if len(ps) == 1:
                 styles.append(ps[0]); rules.append("period from composer")
-        genres = dedupe(genres)[: int(self.g.get("max_genres", 2))]
-        styles = dedupe(styles + cur("style")) if self.g.get("write_style", True) else []
+        genres = dedupe(cap_genre(x) for x in genres)[: int(self.g.get("max_genres", 2))]
+        styles = dedupe(cap_genre(x) for x in styles + cur("style")) if self.g.get("write_style", True) else []
         styles = [s for s in styles if name_key(s) not in {name_key(x) for x in genres}]
         if self.g.get("style_into_genre", False):
             genres = dedupe(genres + styles)
@@ -492,6 +492,8 @@ def main():
     ap.add_argument("--out", default="changes.csv")
     ap.add_argument("--only", help="comma separated fields to propose (default: all)")
     ap.add_argument("--path", help="only files under this folder")
+    ap.add_argument("--genre-case-only", action="store_true",
+                    help="only fix the capitalisation of the words in GENRE; no other change")
     args = ap.parse_args()
     handle_interrupts()
 
@@ -522,12 +524,18 @@ def main():
         if i % 2000 == 0:
             print(f"  tracks {i}/{len(rows)}", flush=True)
         t = json.loads(tags)
-        p, main_artists = prop.track(t)
+        if args.genre_case_only:
+            fixed = [cap_genre(g) for g in t.get("genre", [])]
+            p = {"genre": (fixed, "high", "genre: capitalisation")} if fixed != t.get("genre", []) else {}
+            main_artists = []
+        else:
+            p, main_artists = prop.track(t)
         tracks.append((path, t, p, main_artists))
-    print("albums, album names, classical genres ...", flush=True)
-    prop.albums(tracks)
-    prop.album_names(tracks)
-    prop.classical_genres(tracks)
+    if not args.genre_case_only:
+        print("albums, album names, classical genres ...", flush=True)
+        prop.albums(tracks)
+        prop.album_names(tracks)
+        prop.classical_genres(tracks)
     print(f"writing {args.out} ...", flush=True)
 
     stats, conf_stats, n = Counter(), Counter(), 0

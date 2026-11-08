@@ -85,6 +85,9 @@ STEPS = [
             {"name": "path", "type": "path", "default": "", "flag": "--path",
              "label": "Solo esta subcarpeta",
              "help": "Ruta dentro de la biblioteca. Vacío = toda."},
+            {"name": "genre_case_only", "type": "bool", "default": False, "flag": "--genre-case-only",
+             "label": "Solo mayúsculas del género",
+             "help": "Solo corrige las mayúsculas de las palabras del género; nada más."},
         ],
     },
     {

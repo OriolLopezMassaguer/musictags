@@ -295,6 +295,19 @@ def nice_case(s: str) -> str:
     return s
 
 
+def cap_genre(s: str) -> str:
+    """Capitalise the first letter of every word of a genre/style ('hip-hop/rap' -> 'Hip-Hop/Rap'),
+    keeping 'and'/'of'/... lower inside the name. Letters already upper are left alone ('R&B')."""
+    small = {"and", "of", "the", "in", "de", "la", "y", "n"}
+    seen = [0]
+
+    def word(m):
+        w = m.group(0)
+        first, seen[0] = not seen[0], seen[0] + 1
+        return w if (not first and w in small) else w[:1].upper() + w[1:]
+    return re.sub(r"[^\W\d_]+(?:'[^\W\d_]+)*", word, s)
+
+
 PARTICLES = {"van", "von", "de", "di", "da", "del", "della", "des", "du", "la", "le",
              "y", "der", "den", "ten", "zu", "dos", "das"}
 SUFFIXES = {"ii", "iii", "jr", "jr.", "sr", "sr.", "the elder", "the younger"}
